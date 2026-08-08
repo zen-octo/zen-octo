@@ -34,6 +34,10 @@ type ListMap struct {
 // FocusPane is one binding over the digits rather than one per pane, because
 // the Files tab puts a third pane on screen and the panes are numbered by where
 // they sit rather than by what they hold.
+//
+// FocusNext and FocusPrev own tab and shift+tab, which the tab strip used to
+// answer to as well. The strip keeps the brackets: the ring is the key a reader
+// reaches for many times on one pull request, and the strip a handful.
 type DetailMap struct {
 	Up           key.Binding
 	Down         key.Binding
@@ -47,6 +51,8 @@ type DetailMap struct {
 	PrevTab      key.Binding
 	NextFile     key.Binding
 	PrevFile     key.Binding
+	FocusNext    key.Binding
+	FocusPrev    key.Binding
 	PaneLeft     key.Binding
 	PaneRight    key.Binding
 	FocusPane    key.Binding
@@ -88,10 +94,12 @@ var (
 		PageDown:     key.NewBinding(key.WithKeys("pgdown", "ctrl+f"), key.WithHelp("pgdn", "page down")),
 		HalfPageUp:   key.NewBinding(key.WithKeys("ctrl+u"), key.WithHelp("ctrl+u", "half page up")),
 		HalfPageDown: key.NewBinding(key.WithKeys("ctrl+d"), key.WithHelp("ctrl+d", "half page down")),
-		NextTab:      key.NewBinding(key.WithKeys("]", "tab"), key.WithHelp("]/tab", "next tab")),
-		PrevTab:      key.NewBinding(key.WithKeys("[", "shift+tab"), key.WithHelp("[", "prev tab")),
+		NextTab:      key.NewBinding(key.WithKeys("]"), key.WithHelp("]", "next tab")),
+		PrevTab:      key.NewBinding(key.WithKeys("["), key.WithHelp("[", "prev tab")),
 		NextFile:     key.NewBinding(key.WithKeys("}"), key.WithHelp("}", "next file")),
 		PrevFile:     key.NewBinding(key.WithKeys("{"), key.WithHelp("{", "prev file")),
+		FocusNext:    key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "focus next")),
+		FocusPrev:    key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("shift+tab", "focus prev")),
 		PaneLeft:     key.NewBinding(key.WithKeys("h", "left"), key.WithHelp("h/←", "pane left")),
 		PaneRight:    key.NewBinding(key.WithKeys("l", "right"), key.WithHelp("l/→", "pane right")),
 		FocusPane:    key.NewBinding(key.WithKeys("1", "2", "3"), key.WithHelp("1/2/3", "focus pane")),
@@ -121,6 +129,10 @@ func (k ListMap) FullHelp() [][]key.Binding {
 // ShortHelp is the one line the status bar carries. Refresh is in the overlay
 // only: a seventh hint pushes the line past the pull request number on the
 // right at 100 columns, and the number is what says which one is on screen.
+//
+// FocusNext is in the overlay for a different reason. The bar is the same line
+// on every tab, and the ring is only on the one without a column; hinting it
+// beside a pane where it does nothing is worse than not hinting it at all.
 func (k DetailMap) ShortHelp() []key.Binding {
 	return []key.Binding{k.Down, k.NextTab, k.Expand, k.ToggleRail, k.Back, Global.Help}
 }
@@ -131,8 +143,8 @@ func (k DetailMap) FullHelp() [][]key.Binding {
 		{k.Up, k.Down, k.Top, k.Bottom},
 		{k.PageUp, k.PageDown, k.HalfPageUp, k.HalfPageDown},
 		{k.NextTab, k.PrevTab, k.NextFile, k.PrevFile},
-		{k.FocusPane, k.ToggleRail, k.Expand},
-		{k.PaneLeft, k.PaneRight, k.Refresh, k.Back},
-		{Global.Help, Global.Quit},
+		{k.FocusNext, k.FocusPrev, k.Expand, k.ToggleRail},
+		{k.PaneLeft, k.PaneRight, k.FocusPane},
+		{k.Refresh, k.Back, Global.Help, Global.Quit},
 	}
 }

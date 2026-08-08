@@ -33,6 +33,10 @@ const threadHunkLines = 4
 // root raises a toast for that; blanking the screen would be worse news than
 // the news.
 func (m *Model) conversationBody() string {
+	// The ring is rebuilt from the blocks below. A tab that renders none of them
+	// leaves nothing behind for tab to land on.
+	m.convRing.reset()
+
 	switch {
 	case m.detail.Loaded:
 		return m.entries()
@@ -46,51 +50,70 @@ func (m *Model) entries() string {
 	d := m.detail.Detail
 	width := m.bodyWidth()
 
-	blocks := []string{m.description(d, width)}
+	var blocks []string
+	at := m.convRing.lead
+
+	// push records where a block landed before the join puts a blank line under
+	// it. A key of no kind is a block tab walks past: a merge or a run of
+	// commits is something to read, not something to act on.
+	push := func(block string, key focusKey) {
+		blocks = append(blocks, block)
+		lines := strings.Count(block, "\n") + 1
+		if key.kind != focusNone {
+			m.convRing.add(key, at, lines)
+		}
+		at += lines + 1
+	}
+
+	push(m.description(d, width), focusKey{kind: focusDescription})
 
 	// A thread whose review never made this page would otherwise never render.
 	// Whatever is left after the walk goes at the end rather than nowhere.
 	shown := make(map[int]bool, len(d.Threads))
 
-	for at := 0; at < len(d.Timeline); at++ {
-		item := d.Timeline[at]
+	for i := 0; i < len(d.Timeline); i++ {
+		item := d.Timeline[i]
 		switch item.Kind {
 		case gh.TimelineComment:
+			key := focusKey{kind: focusComment, index: i}
 			head := m.said(item.Actor, "commented", m.theme.Faint, item)
-			blocks = append(blocks, m.card(head, m.body(item.Body, m.cardWidth(width), "No comment."), width))
+			push(m.card(head, m.body(item.Body, m.cardWidth(width), "No comment.", key), width, key), key)
 
 		case gh.TimelineReview:
-			blocks = append(blocks, m.review(item, d.Threads, shown, width))
+			// The review records its own card and every thread hung off it, so
+			// it takes the line it starts on and push takes no key.
+			push(m.review(item, i, d.Threads, shown, width, at), focusKey{})
 
 		case gh.TimelineCommit:
 			// A push arrives as one item per commit. They fold back into the one
 			// line here rather than in the gh package, because how many rows a
 			// run is worth is a rendering question and the Commits tab wants
 			// them apart.
-			run := commitRun(d.Timeline[at:])
-			blocks = append(blocks, m.pushed(run))
-			at += len(run) - 1
+			run := commitRun(d.Timeline[i:])
+			push(m.pushed(run), focusKey{})
+			i += len(run) - 1
 
 		default:
 			// An event this build has no words for renders to nothing, and an
 			// empty block still costs the blank line the join puts after it.
 			if line := m.event(item); line != "" {
-				blocks = append(blocks, line)
+				push(line, focusKey{})
 			}
 		}
 	}
 
 	for i, thread := range d.Threads {
 		if !shown[i] {
-			blocks = append(blocks, m.thread(thread, width, true))
+			key := focusKey{kind: focusThread, index: i}
+			push(m.thread(thread, width, true, key), key)
 		}
 	}
 
 	if n := d.MoreComments; n > 0 {
-		blocks = append(blocks, wrap(m.faint().Render(comp.Plural(n, "older comment")+" on GitHub"), width))
+		push(wrap(m.faint().Render(comp.Plural(n, "older comment")+" on GitHub"), width), focusKey{})
 	}
 	if n := d.MoreThreads; n > 0 {
-		blocks = append(blocks, wrap(m.faint().Render(comp.Plural(n, "more review thread")+" on GitHub"), width))
+		push(wrap(m.faint().Render(comp.Plural(n, "more review thread")+" on GitHub"), width), focusKey{})
 	}
 
 	return strings.Join(blocks, "\n\n")
@@ -99,22 +122,38 @@ func (m *Model) entries() string {
 // review is the verdict and body in a box, then the threads it opened, set in
 // under it. The box is what stops a bot review that runs for forty lines
 // reading as loose comments with no telling where it ends.
-func (m *Model) review(item gh.TimelineItem, threads []gh.ReviewThread, shown map[int]bool, width int) string {
+func (m *Model) review(item gh.TimelineItem, index int, threads []gh.ReviewThread, shown map[int]bool, width, at int) string {
 	label, c := comp.ReviewStateLabel(m.theme, item.Review)
 	head := m.said(item.Actor, label, c, item)
 
-	block := m.card(head, m.body(item.Body, m.cardWidth(width), "No comment."), width)
+	key := focusKey{kind: focusReview, index: index}
+	block := m.card(head, m.body(item.Body, m.cardWidth(width), "No comment.", key), width, key)
 
-	var owned []string
+	used := strings.Count(block, "\n") + 1
+	m.convRing.add(key, at, used)
+
+	type hung struct {
+		block string
+		key   focusKey
+	}
+
+	var owned []hung
 	for i, thread := range threads {
 		if thread.ReviewID != item.ID || thread.ReviewID == "" {
 			continue
 		}
 		shown[i] = true
-		owned = append(owned, m.thread(thread, width-treeGutter, true))
+		tk := focusKey{kind: focusThread, index: i}
+		owned = append(owned, hung{m.thread(thread, width-treeGutter, true, tk), tk})
 	}
-	for i, thread := range owned {
-		block += "\n" + m.branch(thread, i == len(owned)-1)
+
+	for i, t := range owned {
+		lines := strings.Count(t.block, "\n") + 1
+		// The rail opens with a line of its own above the thread's first, so the
+		// thread starts one below where the branch does.
+		m.convRing.add(t.key, at+used+1, lines)
+		used += lines + 1
+		block += "\n" + m.branch(t.block, i == len(owned)-1)
 	}
 	return block
 }
@@ -157,11 +196,23 @@ func (m Model) branch(block string, last bool) string {
 //
 // The gutter is the caller's rather than the pane's, because the rail already
 // indents its own entries and would end up with two.
-func (m Model) card(head, content string, width int) string {
-	pane := comp.NewPane(m.theme).Header(" " + head)
+//
+// A focused card takes its border in the accent, the same signal the panes
+// around it already use for where the keys go.
+func (m Model) card(head, content string, width int, key focusKey) string {
+	pane := comp.NewPane(m.theme).Header(" " + head).Focus(m.lit(key))
 	body := indent(content, cardGutter)
 	lines := strings.Count(body, "\n") + 1
 	return pane.Size(width, lines+pane.Chrome()).Render(body)
+}
+
+// lit is whether a block holds the conversation's focus. A card is only lit on
+// the pane the keys are going to, which is neither the Files tab, where the
+// same threads render under a ring tab does not walk, nor the conversation
+// while the rail has focus. A card lit on a pane the key does nothing to is a
+// lie about the key, and two panes lit at once is the same lie twice.
+func (m Model) lit(key focusKey) bool {
+	return m.railTab() && m.focus == paneMain && m.convRing.focused(key)
 }
 
 // cardWidth is what is left for text once the box has taken its sides and its
@@ -172,8 +223,8 @@ func (m Model) cardWidth(width int) int { return max(1, width-2-2*cardGutter) }
 // stands for it. GitHub collapses them in the browser for the same reason: a
 // bot review pastes a table of every file it looked at, and it is never the
 // thing you opened the pull request to read.
-func (m *Model) markdown(text string, width int) string {
-	if m.expanded {
+func (m *Model) markdown(text string, width int, key focusKey) string {
+	if m.expanded[key] {
 		return m.md.Render(text, width)
 	}
 
@@ -195,13 +246,14 @@ func (m *Model) markdown(text string, width int) string {
 }
 
 func (m *Model) description(d gh.PullRequestDetail, width int) string {
+	key := focusKey{kind: focusDescription}
 	head := m.said(d.Author, "opened this", m.theme.Faint, gh.TimelineItem{CreatedAt: d.CreatedAt})
-	return m.card(head, m.body(d.Body, m.cardWidth(width), "No description."), width)
+	return m.card(head, m.body(d.Body, m.cardWidth(width), "No description.", key), width, key)
 }
 
 // body renders markdown, falling back to a note rather than a hole in the page.
-func (m *Model) body(text string, width int, empty string) string {
-	if out := m.markdown(text, width); strings.TrimSpace(out) != "" {
+func (m *Model) body(text string, width int, empty string, key focusKey) string {
+	if out := m.markdown(text, width, key); strings.TrimSpace(out) != "" {
 		return out
 	}
 	return m.faint().Render(empty)
@@ -314,14 +366,19 @@ var eventLabels = map[gh.TimelineKind]string{
 // hunk asks for the code the thread was written against. The conversation
 // wants it: a comment about a line nobody can see is an assertion about
 // nothing. The Files tab does not, because the line is already on the screen.
-func (m *Model) thread(t gh.ReviewThread, width int, hunk bool) string {
+func (m *Model) thread(t gh.ReviewThread, width int, hunk bool, key focusKey) string {
 	anchor := t.Path
 	if t.Line > 0 {
 		anchor += ":" + strconv.Itoa(t.Line)
 	}
 
 	if t.IsResolved {
-		return wrap(m.faint().Render("✓ "+anchor+" · resolved · "+
+		// One line has no border to take the accent, so the text carries it.
+		style := m.faint()
+		if m.lit(key) {
+			style = lipgloss.NewStyle().Foreground(m.theme.Secondary)
+		}
+		return wrap(style.Render("✓ "+anchor+" · resolved · "+
 			comp.Plural(len(t.Comments), "comment")), width)
 	}
 
@@ -339,10 +396,10 @@ func (m *Model) thread(t gh.ReviewThread, width int, hunk bool) string {
 	}
 	for _, c := range t.Comments {
 		said := m.said(c.Author, "said", m.theme.Faint, gh.TimelineItem{CreatedAt: c.CreatedAt})
-		blocks = append(blocks, wrap(said, inner)+"\n\n"+m.body(c.Body, inner, "No comment."))
+		blocks = append(blocks, wrap(said, inner)+"\n\n"+m.body(c.Body, inner, "No comment.", key))
 	}
 
-	return m.card(head, strings.Join(blocks, "\n\n"), width)
+	return m.card(head, strings.Join(blocks, "\n\n"), width, key)
 }
 
 // threadHunk is the tail of the diff the thread hangs off, rendered the same

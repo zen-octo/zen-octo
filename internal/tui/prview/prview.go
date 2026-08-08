@@ -65,9 +65,11 @@ const railMinFrame = 120
 // conversation narrower than this is not worth the trade.
 const railMinForced = columnWidth + 40
 
-// railGutter is the space between the rail's borders and what it holds, on both
-// sides. Text against a border reads as a rendering fault rather than as a
-// column.
+// railGutter is the space between the rail's left border and what it holds.
+// Text against a border reads as a rendering fault rather than as a column.
+//
+// The right side is railNameRoom's business: a row runs the full width so the
+// cursor line reaches the border, and it is the name that stops short.
 const railGutter = 1
 
 // contentMeasure caps the conversation and centres it. Text set the full width
@@ -171,10 +173,20 @@ type Model struct {
 	// a push fetch the change rather than the one before it.
 	filesAsked bool
 
-	// expanded unfolds every <details> block on the screen at once. It is one
-	// bool because the conversation has no cursor to hang a per-block state on;
-	// that lands with the ticket that gives it one.
-	expanded bool
+	// convRing and railRing are what tab walks: the conversation's cards and
+	// the rail's rows. The panes with a column of their own have a cursor
+	// instead, and no ring.
+	convRing ring
+	railRing ring
+
+	// expanded is which cards have their <details> blocks unfolded, keyed the
+	// same way the ring keys what it points at. A review thread renders on the
+	// Files tab as well as in the conversation, so both read this.
+	//
+	// folds counts the toggles, which is what tells the diff's block cache that
+	// a thread inside one of its files renders differently now.
+	expanded map[focusKey]bool
+	folds    int
 
 	// offsets parks the scroll position of each tab. One viewport serves all
 	// four, and without this switching to a short tab clamps the offset to zero
@@ -212,6 +224,7 @@ func New(th theme.Theme, pr gh.PullRequest, rail RailPreference, syntax comp.Syn
 		// against. The Commits tab keeps a diffBody of its own, which does not.
 		diff:        diffBody{threads: true},
 		collapsed:   make(map[string]bool),
+		expanded:    make(map[focusKey]bool),
 		offsets:     make([]int, len(tabs)),
 		railOn:      rail.On,
 		railUserSet: rail.Set,
@@ -331,10 +344,20 @@ func (m Model) handleKey(keyMsg tea.KeyPressMsg) (Model, tea.Cmd) {
 
 	switch {
 	case key.Matches(keyMsg, k.Back):
+		// Letting go of a card and leaving the screen are two intentions on one
+		// key. The narrower one goes first.
+		if m.clearFocus() {
+			return m, nil
+		}
 		return m, func() tea.Msg { return BackMsg{} }
 
 	case key.Matches(keyMsg, k.Refresh):
 		return m, m.refresh()
+
+	case key.Matches(keyMsg, k.FocusNext):
+		m.stepFocus(1)
+	case key.Matches(keyMsg, k.FocusPrev):
+		m.stepFocus(-1)
 
 	case key.Matches(keyMsg, k.NextTab):
 		return m, m.changeTab(1)
@@ -370,8 +393,7 @@ func (m Model) handleKey(keyMsg tea.KeyPressMsg) (Model, tea.Cmd) {
 	case key.Matches(keyMsg, k.Expand) && m.tab == tabFiles:
 		m.toggleFold()
 	case key.Matches(keyMsg, k.Expand):
-		m.expanded = !m.expanded
-		m.syncContent()
+		m.toggleExpanded()
 
 	// Neither tab with a column has a rail to toggle. Reading railVisible here
 	// would take its hard false for the user's preference and turn a hidden rail
@@ -582,6 +604,101 @@ func (m *Model) changeTab(delta int) tea.Cmd {
 	return func() tea.Msg { return NeedFilesMsg{ID: id} }
 }
 
+// focusRing is the ring the focused pane walks, with the viewport it scrolls
+// in. Nil on a pane that has a cursor of its own: the file tree, the commit
+// column and the workflow column are all walked by j and k already.
+func (m *Model) focusRing() (*ring, *viewport.Model) {
+	switch {
+	case m.focus == paneRail && m.railVisible():
+		return &m.railRing, &m.railView
+	case m.focus == paneMain && m.railTab():
+		return &m.convRing, &m.view
+	}
+	return nil, nil
+}
+
+// stepFocus walks the ring one item and brings what it lands on into view.
+//
+// The body is rebuilt before the offset moves, because a focused card renders
+// differently and SetYOffset clamps to the content the viewport is holding.
+func (m *Model) stepFocus(delta int) {
+	r, vp := m.focusRing()
+	if r == nil {
+		return
+	}
+
+	top := bodyTop(vp)
+	if !r.step(delta, top, vp.Height()) {
+		return
+	}
+
+	m.syncContent()
+	vp.SetYOffset(contentLead + r.show(top, vp.Height()))
+}
+
+// bodyTop is the viewport's offset in the lines the ring recorded, which sit
+// one below it: every pane opens with a blank the items do not count.
+//
+// It is not clamped at zero. Clamping on the way in while contentLead goes back
+// on the way out moves the page a line at the top of a scrollable pane, on a
+// keypress that was meant to leave it alone.
+func bodyTop(vp *viewport.Model) int { return vp.YOffset() - contentLead }
+
+// clearFocus lets go of a focus the reader can see, and reports whether there
+// was one. Both rings, because focus survives a move to the other pane and esc
+// should not have to be pressed once per ring.
+//
+// A focus that is not on the screen is not one to let go of. Swallowing esc for
+// a highlight nowhere on the frame reads as a key that does nothing, and the
+// tabs with a column show no ring at all.
+func (m *Model) clearFocus() bool {
+	if !m.railTab() {
+		return false
+	}
+
+	cleared := false
+	for _, r := range []struct {
+		ring *ring
+		vp   *viewport.Model
+	}{{&m.convRing, &m.view}, {&m.railRing, &m.railView}} {
+		if r.ring.live(bodyTop(r.vp), r.vp.Height()) && r.ring.clear() {
+			cleared = true
+		}
+	}
+
+	if cleared {
+		m.syncContent()
+	}
+	return cleared
+}
+
+// toggleExpanded unfolds the <details> blocks in the focused card. There is
+// nothing to unfold with no card focused, which is what tab is one key away
+// for. Rail rows hold no prose and answer to it with nothing.
+//
+// A card scrolled off the screen is not the one the reader means, any more than
+// it is the one tab lands on. Acting on it would unfold something out of sight
+// and drag the page back to it.
+func (m *Model) toggleExpanded() {
+	r, vp := m.focusRing()
+	if r == nil || !r.on.kind.prose() {
+		return
+	}
+
+	top := bodyTop(vp)
+	if !r.live(top, vp.Height()) {
+		return
+	}
+
+	m.expanded[r.on] = !m.expanded[r.on]
+	m.folds++
+
+	// Unfolding pushes everything under it down. Without this the card that
+	// just grew opens below the window it was read in.
+	m.syncContent()
+	vp.SetYOffset(contentLead + r.show(top, vp.Height()))
+}
+
 // focusPane moves focus to a pane, skipping whatever is not on screen. Focus
 // walks left to right, which is the order the panes are numbered in.
 func (m *Model) focusPane(want pane) {
@@ -770,11 +887,16 @@ func (m *Model) syncContent() {
 			m.sideView.SetContent(m.sideBody(inner))
 		}
 	}
-	if inner := m.rail.InnerWidth(); inner > railGutter*2 {
-		// The rail opens with a blank line and sits in from both borders, the
-		// same as the conversation beside it.
-		body := indent(railBody(m.theme, m.railDetail(), inner-railGutter*2), railGutter)
-		m.railView.SetContent("\n" + body)
+	if inner := m.rail.InnerWidth(); m.railVisible() && inner > railGutter*2 {
+		// The rail opens with a blank line, the same as the conversation beside
+		// it. Its own gutter is the rows', not this pane's: a selected row is a
+		// background, and an indent added out here would leave the cursor line
+		// starting one column in from the border.
+		m.railView.SetContent("\n" + m.railBody(inner))
+	} else {
+		// A rail off the screen holds nothing to point at, and rows left in the
+		// ring would be walked by a tab pressed after it came back.
+		m.railRing = ring{}
 	}
 }
 
@@ -871,7 +993,12 @@ func (m *Model) tabBody() string {
 	case tabFiles:
 		return m.filesBody()
 	}
-	return m.conversation() + "\n" + m.conversationBody()
+
+	// The header block sits above the first card, and the ring has to clear it
+	// or every card is that many lines out from where tab scrolls to.
+	head := m.conversation()
+	m.convRing.lead = strings.Count(head, "\n") + 1
+	return head + "\n" + m.conversationBody()
 }
 
 // sideBody renders whichever column the tab has.

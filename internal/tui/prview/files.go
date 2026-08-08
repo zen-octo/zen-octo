@@ -47,10 +47,15 @@ type blockKey struct {
 }
 
 // blockState is everything outside a single file that its block is rendered
-// against. A change to any of it retires the whole cache.
+// against. A change to either retires the whole cache.
+//
+// folds counts how many times a <details> block has been folded or unfolded.
+// Which ones are open is a map, and a count says the same thing to a cache key
+// without the cache having to hold the map: a toggle moves it by one either way,
+// so no two consecutive states share a number.
 type blockState struct {
-	width    int
-	expanded bool
+	width int
+	folds int
 }
 
 // diffBody is one rendered diff: where each file's block sits inside it, and
@@ -98,7 +103,14 @@ func (m *Model) renderDiff(rows []row, res store.Files, d *diffBody) string {
 	width := m.bodyWidth()
 	d.spans = d.spans[:0]
 
-	if state := (blockState{width: width, expanded: m.expanded}); d.blocks == nil || d.at != state {
+	// A fold only reaches blocks with review threads in them. The Commits tab's
+	// diff carries none, so counting folds against it retires the whole cache
+	// and re-tokenises a commit for a keypress that changed nothing it renders.
+	state := blockState{width: width}
+	if d.threads {
+		state.folds = m.folds
+	}
+	if d.blocks == nil || d.at != state {
 		d.blocks, d.at = make(map[blockKey]string, len(rows)), state
 	}
 
@@ -169,7 +181,7 @@ func (m *Model) fileBody(f gh.ChangedFile, width int, threads bool) string {
 	}
 
 	// A nil map answers nothing, so the lines below need no guard of their own.
-	var anchored map[anchor][]gh.ReviewThread
+	var anchored map[anchor][]int
 	if threads {
 		anchored = m.threadsIn(f.Path)
 	}
@@ -355,30 +367,40 @@ func (m *Model) lineTokens(f gh.ChangedFile) [][]comp.Token {
 }
 
 // threadsIn is every review thread written against a file, keyed by where it
-// hangs.
-func (m Model) threadsIn(path string) map[anchor][]gh.ReviewThread {
-	out := make(map[anchor][]gh.ReviewThread)
-	for _, t := range m.detail.Detail.Threads {
+// hangs. The buckets hold the thread's place in the detail rather than the
+// thread: that index is what the conversation calls the same thread, so the two
+// tabs agree on which one has been unfolded.
+func (m Model) threadsIn(path string) map[anchor][]int {
+	out := make(map[anchor][]int)
+	for i, t := range m.detail.Detail.Threads {
 		if t.Path != path || t.Line == 0 {
 			continue
 		}
 		key := anchor{side: t.Side, line: t.Line}
-		out[key] = append(out[key], t)
+		out[key] = append(out[key], i)
 	}
 	return out
 }
 
 // threadsAt renders whatever hangs off a line. A context line sits on both
 // sides of the diff, so it answers to a comment written against either.
-func (m *Model) threadsAt(threads map[anchor][]gh.ReviewThread, placed map[int]bool, l gh.DiffLine, width int) []string {
+func (m *Model) threadsAt(threads map[anchor][]int, placed map[int]bool, l gh.DiffLine, width int) []string {
 	var out []string
 	for _, key := range anchorsOf(l) {
-		for _, t := range threads[key] {
-			placed[thumbprint(t)] = true
-			out = append(out, indent(m.thread(t, width-threadIndent, false), threadIndent))
+		for _, i := range threads[key] {
+			placed[i] = true
+			out = append(out, m.diffThread(i, width))
 		}
 	}
 	return out
+}
+
+// diffThread renders one thread inline in the diff, under the same key the
+// conversation gives it, so a <details> block unfolded on one tab is unfolded
+// on the other. Focus is not shared: a card is only lit on the tab with a ring.
+func (m *Model) diffThread(i, width int) string {
+	key := focusKey{kind: focusThread, index: i}
+	return indent(m.thread(m.detail.Detail.Threads[i], width-threadIndent, false, key), threadIndent)
 }
 
 func anchorsOf(l gh.DiffLine) []anchor {
@@ -400,31 +422,13 @@ func anchorsOf(l gh.DiffLine) []anchor {
 // out under the file in a different order every time it was rendered.
 func (m *Model) strayThreads(path string, placed map[int]bool, width int) []string {
 	var out []string
-	for _, t := range m.detail.Detail.Threads {
-		if t.Path != path || t.Line == 0 || placed[thumbprint(t)] {
+	for i, t := range m.detail.Detail.Threads {
+		if t.Path != path || t.Line == 0 || placed[i] {
 			continue
 		}
-		out = append(out, indent(m.thread(t, width-threadIndent, false), threadIndent))
+		out = append(out, m.diffThread(i, width))
 	}
 	return out
-}
-
-// thumbprint identifies a thread across the two passes over the same map. The
-// domain type carries no id, and the anchor plus the first comment is what no
-// two threads on one file share.
-func thumbprint(t gh.ReviewThread) int {
-	h := 17
-	for _, s := range []string{string(t.Side), t.Path, t.ReviewID} {
-		for _, r := range s {
-			h = h*31 + int(r)
-		}
-	}
-	if len(t.Comments) > 0 {
-		for _, r := range t.Comments[0].Body {
-			h = h*31 + int(r)
-		}
-	}
-	return h*31 + t.Line
 }
 
 // widest is the longest line number the file has to print, which is what the
