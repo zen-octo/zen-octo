@@ -6,6 +6,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Drew's Go terminal client for GitHub, at `praxis-labs-io/zen-octo` (`origin`). It handles a pull request end to end without opening a browser: read it, discuss it, watch its CI, fix its metadata, merge it. Issues get the same treatment where it makes sense.
 
+`docs/` holds everything a user reads: the guide, the keymap, configuration and
+install. `docs/CONTRIBUTING.md` holds the checks, the boundaries and the test
+conventions, and `README.md` is the front page linking in. Read those rather
+than restating them here.
+
+What stays below is what the code has to keep true and a reader never sees.
+Change one and the other says the wrong thing: `docs/CONTRIBUTING.md` carries a
+map from changed surface to the document describing it.
+
 gh-dash is the reference for GitHub search-query shapes and section config, not for code. It runs on Bubble Tea v1, so its view code does not lift verbatim.
 
 **`main` is the product branch.** Feature work flows ticket → branch → PR on `origin` (see Project Management).
@@ -23,7 +32,7 @@ The installed binary is built from here to `~/.local/bin/zen-octo`; **rebuild af
 make install
 ```
 
-The repo moved to the `praxis-labs-io` org on 2026-08-18, so the module path is `github.com/praxis-labs-io/zen-octo`. There is no release and no Homebrew tap; `make install` is the only install. The emptied `zen-octo` org is held to keep the name.
+The repo moved to the `praxis-labs-io` org on 2026-08-18, so the module path is `github.com/praxis-labs-io/zen-octo`. A `v*` tag cuts a release: `.github/workflows/release.yml` builds the five targets, writes the checksums, and cuts it from `docs/release-notes/<tag>.md`, which has to be on `main` before the tag is. There is no Homebrew tap. The emptied `zen-octo` org is held to keep the name.
 
 Anything published under Drew's name (PR bodies, issues, README) must be shown to him word-for-word before pushing. His voice: terse, considerate, stoic, no strong adverbs, no em-dashes.
 
@@ -147,7 +156,7 @@ merge. Dropping them costs a reader nothing they could have aimed.
 
 Every scrollable region owns its own `bubbles/v2/viewport`. Scroll state never sits on the root model.
 
-Key bindings live in `internal/tui/keys`, declared once with their help text. The help view renders from the same declarations, and tests hold that nothing declared goes unlisted and nothing listed is invented.
+Key bindings live in `internal/tui/keys`, declared once with their help text. The help view renders from the same declarations, and tests hold that nothing declared goes unlisted and nothing listed is invented. `docs/keys.md` is written from those same declarations, so a rebind moves three things or none.
 
 The braces are paragraph motion, the way they are in vim, and mean the same thing wherever the detail screen holds blocks: go to the next one. What a block is belongs to the tab, so the key walks the cards on the conversation, the hunks and the comments written against them on Files, and whole files on Commits, which has no ring. They were two separate keys once, for one intention, and whichever the reader pressed was inert on the tab the other worked on. The strip keeps `]` and `[`, where they do what they do on the list screen, and `tab` and `shift+tab` change the file on the tab that shows one at a time. `keys.Form` is where tab means something else, and it is its own map rather than part of `DetailMap`: a compose box or the merge form takes every key until it closes, so the two are never live together, and the braces a reader walks blocks with are text inside a textarea. It means one thing further in again under a mention list, where tab writes the handle rather than stepping to the button, which is the same intention one level down: go to the thing that finishes what is being written.
 

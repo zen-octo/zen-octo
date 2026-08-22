@@ -13,8 +13,9 @@ on:
     # transition. Draft PRs still emit these events — the job-level `if` below
     # is what actually skips them.
     types: [opened, synchronize, reopened, ready_for_review]
-    branches:
-      - main
+    # No branch filter. A PR onto a stacked branch would otherwise trigger
+    # nothing, and required checks that never ran report as satisfied rather
+    # than as missing.
 
 concurrency:
   # The action is part of the key so a `ready_for_review` run can't be cancelled
