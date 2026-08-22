@@ -1520,7 +1520,10 @@ func TestEnterOpensTheDetailAndEscapeComesBack(t *testing.T) {
 
 	detail := press(m, "enter")
 	out := render(t, detail)
-	if !strings.Contains(out, "Conversation") {
+	// Stripped, the way the line under it reads: the current tab is underlined
+	// and lipgloss writes that one run per rune, so the raw frame carries no
+	// contiguous "Conversation" to match on.
+	if !strings.Contains(stripANSI(out), "Conversation") {
 		t.Errorf("detail = %q, want the conversation tab strip", out)
 	}
 	if !strings.Contains(stripANSI(out), "#408 Bump deps") {

@@ -234,11 +234,14 @@ dashes. The list screen still draws its sections through `Pane.Tabs`, so the two
 are two renderers on purpose, and the header's stays in `prview` with its one
 caller.
 
-**The mark is a cell every tab holds open, not a prefix the current one gains.**
-It is `paint.BarGlyph`, the rail cursor's and the diff row's. Drawn on the active
-tab alone, every tab to its right would step a column sideways each time the
-reader changed tab, which is a strip that moves under the key that moves through
-it. The counts go before a name does: at the narrowest frame the shell will draw
+**The current tab is underlined rather than marked.** A glyph would need a cell
+every tab held open, or every tab to the right of the current one steps sideways
+on the key that steps through them; an underline takes none, so the strip starts
+level with the two rows above it. It is held off the pane borders by a blank of
+its own, because a rule landing on a border reads as one the border grew rather
+than as a mark on the tab it sits under. Lipgloss writes that underline one SGR
+run per rune, so nothing may look for a single escape standing in front of a
+whole label. The counts go before a name does: at the narrowest frame the shell will draw
 the counted strip is a few cells over, and clipping there takes the tail off the
 last tab, which may be the one the reader is standing on. Conversation and Files
 count off the list row, so they are there before the detail query answers;
@@ -269,6 +272,17 @@ runs again on every resize. The strip is left alone: a reader changing tab has
 already chosen a pane, and handing the keys back on every press of it would make
 them ask for the page again each time they came round. Commits and Checks still
 take their column on arrival, which they did before any of this.
+
+**A tab gives back the pane it was left on.** Focus is one field where the
+scroll is four, and Commits and Checks take their column, so a round trip
+through one of them used to come back on a pane nobody chose: the column leaves
+the screen and `layout` puts the keys wherever is left. `panes` parks it per tab
+beside `offsets`, and `paneNone` leads the enum so an unopened tab is the
+slice's own zero. Those two take their column on arrival and only on arrival,
+which is what that zero answers: a reader who walked off it once meant it. The
+fallback lands on the leading pane rather than on the main one, because the rail
+and the file column are exclusive and sit in the same place, and what a
+departing column leaves behind is whatever stands where it stood.
 
 **A cursor is landed wherever there is something to land it on**, and `esc`
 leaves in one press. The conversation and the diff opened with nothing lit, so

@@ -581,6 +581,54 @@ func TestOnlyThePaneHoldingTheKeysPaintsItsFocus(t *testing.T) {
 	}
 }
 
+// A tab gives back the pane it was left on. Focus is one field where the scroll
+// is four, and Commits takes the column on arrival, so a round trip through it
+// used to come back on whatever layout was left holding: the column goes off
+// screen on the way back and the keys fell to the page.
+func TestATabGivesBackThePaneItWasLeftOn(t *testing.T) {
+	var (
+		lit  = fgSeq(theme.RosePineMoon.Accent)
+		idle = fgSeq(theme.RosePineMoon.BorderSubtle)
+	)
+
+	// Left alone, the rail leads and keeps the keys across the round trip.
+	m := opened(held(sampleDetail()), 200, 40)
+	if got := conversationBorder(t, m.View()); got != idle {
+		t.Fatalf("setup: the page holds the keys on arrival, want the rail")
+	}
+	if got := conversationBorder(t, press(m, "]", "[").View()); got != idle {
+		t.Error("the round trip took the keys off the rail")
+	}
+
+	// And a reader who chose the page keeps that instead: the tab gives back
+	// what it was left on, not the pane that leads.
+	page := press(m, "2")
+	if got := conversationBorder(t, page.View()); got != lit {
+		t.Fatalf("setup: 2 did not put the keys on the page")
+	}
+	if got := conversationBorder(t, press(page, "]", "[").View()); got != lit {
+		t.Error("the round trip took the keys off the page")
+	}
+}
+
+// Commits and Checks take their column on arrival and only on arrival. A reader
+// who walked off it once meant it, and coming back to a column they left is the
+// strip handing the keys back on a key that only changes what is on screen.
+func TestACommitsColumnIsTakenOnArrivalAndNotAgain(t *testing.T) {
+	idle := fgSeq(theme.RosePineMoon.BorderSubtle)
+
+	m := press(opened(held(sampleDetail()), 200, 40), "]")
+	if got := conversationBorder(t, m.View()); got != idle {
+		t.Fatal("setup: Commits did not take its column on arrival")
+	}
+
+	// Off the column, away, and back.
+	m = press(m, "2")
+	if got := conversationBorder(t, press(m, "[", "]").View()); got == idle {
+		t.Error("Commits took its column again on a tab the reader had left")
+	}
+}
+
 // The strip is ] and [ here and on the list screen, and nothing else reaches
 // it: the braces walk blocks and tab is the file key on the tab with files.
 //
@@ -588,17 +636,16 @@ func TestOnlyThePaneHoldingTheKeysPaintsItsFocus(t *testing.T) {
 // the strip cannot be moved across the screen by anything, only through.
 func TestOnlyTheBracketsMoveTheTabStrip(t *testing.T) {
 	m := detailed(held(sampleDetail()), 160, 24)
-	active := fgSeq(theme.RosePineMoon.Accent)
 
-	if !strings.Contains(stripRow(t, press(m, "]").View()), active+"mCommits") {
-		t.Error("] did not move to the Commits tab")
+	if got := currentTab(t, press(m, "]").View()); got != "Commits" {
+		t.Errorf("] moved to %q, want Commits", got)
 	}
-	if !strings.Contains(stripRow(t, press(m, "[").View()), active+"mFiles") {
-		t.Error("[ did not wrap back to the Files tab")
+	if got := currentTab(t, press(m, "[").View()); got != "Files" {
+		t.Errorf("[ wrapped to %q, want Files", got)
 	}
 	for _, k := range []string{"}", "{", "tab", "shift+tab"} {
-		if !strings.Contains(stripRow(t, press(m, k).View()), active+"mConversation") {
-			t.Errorf("%q moved off the Conversation tab", k)
+		if got := currentTab(t, press(m, k).View()); got != "Conversation" {
+			t.Errorf("%q moved off the Conversation tab, to %q", k, got)
 		}
 	}
 }

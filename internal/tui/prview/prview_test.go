@@ -101,26 +101,21 @@ func TestTheFrameFillsItsSizeExactly(t *testing.T) {
 func TestTabsSwitchAndOnlyOneReadsAsCurrent(t *testing.T) {
 	m := detailed(held(sampleDetail()), 160, 24)
 
-	active := fgSeq(theme.RosePineMoon.Accent)
-	if strip := stripRow(t, m.View()); !strings.Contains(strip, active+"mConversation") {
-		t.Error("Conversation is not the current tab on open")
+	if got := currentTab(t, m.View()); got != "Conversation" {
+		t.Errorf("the current tab is %q on open, want Conversation", got)
 	}
 
 	next := press(m, "]")
-	strip := stripRow(t, next.View())
-	if !strings.Contains(strip, active+"mCommits") {
-		t.Error("] did not move to the Commits tab")
-	}
-	if strings.Contains(strip, active+"mConversation") {
-		t.Error("Conversation still reads as current after switching")
+	if got := currentTab(t, next.View()); got != "Commits" {
+		t.Errorf("] moved to %q, want Commits", got)
 	}
 	if !strings.Contains(stripANSI(next.View()), "No commits.") {
 		t.Error("the body did not follow the tab")
 	}
 
 	// Four tabs, so [ from the first wraps round to the last.
-	if !strings.Contains(stripRow(t, press(m, "[").View()), active+"mFiles") {
-		t.Error("[ from the first tab did not wrap to the last")
+	if got := currentTab(t, press(m, "[").View()); got != "Files" {
+		t.Errorf("[ from the first tab wrapped to %q, want Files", got)
 	}
 }
 
@@ -1559,8 +1554,9 @@ func headerRows(t *testing.T, frame string) []string {
 	return nil
 }
 
-// stripRow is the tab strip: the header's last row, sitting on the borders of
-// the panes it switches.
+// stripRow is the tab strip: the last row of the header that carries anything.
+// The header closes on a blank holding it off the pane borders, so the row
+// above the first corner is that blank rather than the strip.
 func stripRow(t *testing.T, frame string) string {
 	t.Helper()
 
@@ -1569,10 +1565,40 @@ func stripRow(t *testing.T, frame string) string {
 		if strings.HasPrefix(stripANSI(line), "╭") {
 			return last
 		}
-		last = line
+		if strings.TrimSpace(stripANSI(line)) != "" {
+			last = line
+		}
 	}
 	t.Fatal("no pane on screen to close the header")
 	return ""
+}
+
+// currentTab is the tab the strip reads as current, found by the underline it
+// alone carries. Matched on the attribute rather than on a rendered sequence:
+// lipgloss writes one SGR run per rune for an underlined label, so there is no
+// single escape standing in front of the whole name.
+func currentTab(t *testing.T, frame string) string {
+	t.Helper()
+
+	var out strings.Builder
+	row, under := stripRow(t, frame), false
+	for len(row) > 0 {
+		if !strings.HasPrefix(row, "\x1b[") {
+			r := []rune(row)[0]
+			if under {
+				out.WriteRune(r)
+			}
+			row = row[len(string(r)):]
+			continue
+		}
+		end := strings.Index(row, "m")
+		if end < 0 {
+			break
+		}
+		under = slices.Contains(strings.Split(row[2:end], ";"), "4")
+		row = row[end+1:]
+	}
+	return strings.TrimSpace(out.String())
 }
 
 // What and how big, where the code is going, then a gap, then where the reader
@@ -1606,8 +1632,13 @@ func TestTheHeaderReadsAsTwoBlocks(t *testing.T) {
 // strip, so they go first and every width the shell will draw still names all
 // four tabs whole.
 func TestTheStripDropsItsCountsBeforeATabName(t *testing.T) {
+	// A busy pull request, because that is the one the rule is for: four counts
+	// of one digit fit the narrowest frame the shell draws, and it is the third
+	// digit on a long-running branch that puts the strip over.
 	d := sampleDetail()
-	d.Commits = sampleCommits()
+	for range 128 {
+		d.Commits = append(d.Commits, sampleCommits()...)
+	}
 
 	for width := 56; width <= 200; width += 8 {
 		strip := stripANSI(stripRow(t, detailed(held(d), width, 30).View()))
@@ -1619,10 +1650,10 @@ func TestTheStripDropsItsCountsBeforeATabName(t *testing.T) {
 	}
 
 	// And it is the counts the narrow frame gave up to do it.
-	if narrow := stripANSI(stripRow(t, detailed(held(d), 56, 30).View())); strings.Contains(narrow, "(") {
+	if narrow := stripANSI(stripRow(t, detailed(held(d), 56, 40).View())); strings.Contains(narrow, "(") {
 		t.Errorf("the strip kept its counts where they did not fit: %q", narrow)
 	}
-	if wide := stripANSI(stripRow(t, detailed(held(d), 200, 30).View())); !strings.Contains(wide, "(24)") {
+	if wide := stripANSI(stripRow(t, detailed(held(d), 200, 40).View())); !strings.Contains(wide, "(24)") {
 		t.Errorf("the strip carries no counts where they fit: %q", wide)
 	}
 }

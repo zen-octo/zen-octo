@@ -9,7 +9,6 @@ import (
 	"github.com/praxis-labs-io/zen-octo/internal/gh"
 	"github.com/praxis-labs-io/zen-octo/internal/store"
 	"github.com/praxis-labs-io/zen-octo/internal/tui/prview"
-	"github.com/praxis-labs-io/zen-octo/internal/tui/theme"
 )
 
 // jumpHeight is short enough that the fixture's diff does not fit in the pane.
@@ -27,11 +26,10 @@ func jumping(t *testing.T, n int) prview.Model {
 	return m
 }
 
-// onTab is whether the strip reads this tab as the current one. The strip is in
-// the header now, so it is that row the accent is looked for on.
+// onTab is whether the strip reads this tab as the current one.
 func onTab(t *testing.T, frame, name string) bool {
 	t.Helper()
-	return strings.Contains(stripRow(t, frame), fgSeq(theme.RosePineMoon.Accent)+"m"+name)
+	return currentTab(t, frame) == name
 }
 
 // landed is what every jump has to produce: the code the thread was written

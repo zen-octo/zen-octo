@@ -201,7 +201,11 @@ const headRoom = 3
 type pane int
 
 const (
-	paneSide pane = iota
+	// paneNone leads so that it is the zero value: the slice parking a pane per
+	// tab is then a slice of tabs nobody has opened, which is what it is before
+	// anybody presses anything. Nothing focuses it.
+	paneNone pane = iota
+	paneSide
 	paneMain
 	paneRail
 )
@@ -328,6 +332,15 @@ type Model struct {
 	// down.
 	offsets []int
 
+	// panes parks which pane the reader had the keys on, per tab. Focus is one
+	// field where the scroll is four, so without this a round trip through a
+	// tab that takes its own column comes back having lost the choice: the
+	// column goes off screen and focus falls to whatever is left.
+	//
+	// A tab nobody has been to yet holds paneNone, which is what lets Commits
+	// and Checks take their column on arrival and only on arrival.
+	panes []pane
+
 	// compose is the box a comment is written in: the last card in the
 	// conversation, always on the page.
 	//
@@ -425,6 +438,7 @@ func New(th theme.Theme, pr gh.PullRequest, rail RailPreference, syntax syntax.S
 		collapsed:   make(map[string]bool),
 		open:        make(map[focusKey]bool),
 		offsets:     make([]int, len(tabs)),
+		panes:       make([]pane, len(tabs)),
 		railOn:      rail.On,
 		railUserSet: rail.Set,
 	}
@@ -1083,6 +1097,7 @@ func (m *Model) changeTab(delta int) tea.Cmd {
 // conversation into the diff owes the screen everything a tab switch does.
 func (m *Model) goToTab(at int) tea.Cmd {
 	m.offsets[m.tab] = m.view.YOffset()
+	m.panes[m.tab] = m.focus
 	m.tab = at
 
 	// The conversation is the only tab a box is drawn on, so a popup anchored to
@@ -1095,16 +1110,22 @@ func (m *Model) goToTab(at int) tea.Cmd {
 	m.view.SetYOffset(m.offsets[m.tab])
 	m.showSideCursor()
 
-	// Commits opens with an empty diff pane, so the column is the only thing on
-	// the tab there is anything to do with. Checks opens on a full pane, but
-	// every key a reader presses there is picking a workflow. The other two open
-	// on content worth reading and leave focus where the reader put it.
+	// A tab gives back the pane the reader left it on. Focus is one field where
+	// the scroll is four, and a tab that takes its own column takes the focus
+	// with it, so without this the way back is a pane nobody chose: the column
+	// leaves the screen and layout puts the keys wherever is left.
 	//
 	// The leading pane takes the keys on the way in to the screen and not here.
 	// A reader changing tab has already chosen a pane, and handing the keys back
 	// to the rail on every press of the strip makes them ask for the page again
 	// each time they come round to it.
-	if (m.tab == tabCommits || m.tab == tabChecks) && m.sideVisible() {
+	m.focusPane(m.panes[m.tab])
+
+	// Commits opens with an empty diff pane, so the column is the only thing on
+	// the tab there is anything to do with. Checks opens on a full pane, but
+	// every key a reader presses there is picking a workflow. On arrival alone,
+	// because a reader who walked off the column once meant it.
+	if m.panes[m.tab] == paneNone && (m.tab == tabCommits || m.tab == tabChecks) && m.sideVisible() {
 		m.focus = paneSide
 		m.syncContent()
 	}
@@ -1354,8 +1375,12 @@ func (m Model) paneVisible(p pane) bool {
 		return m.sideVisible()
 	case paneRail:
 		return m.railVisible()
+	case paneMain:
+		return true
 	}
-	return true
+	// paneNone is a tab nobody has opened, not a pane. Answering true here puts
+	// the keys on it the first time a tab hands its parked pane back.
+	return false
 }
 
 // scroll is the viewport the movement keys drive. Focus decides, which is what
@@ -1391,9 +1416,12 @@ func (m *Model) layout() {
 	m.conv.ok = false
 
 	// Focus follows the panes: a tab switch or a resize can take the one that
-	// had it off the screen.
+	// had it off the screen. It lands on the leading pane rather than on the
+	// main one, because the rail and the file column are exclusive and sit in
+	// the same place: a column going away leaves whatever stands where it stood,
+	// and on a tab with nothing beside the page that is the page itself.
 	if !m.paneVisible(m.focus) {
-		m.focus = paneMain
+		m.focus = m.visiblePanes()[0]
 	}
 
 	// The header is pinned above the panes, so what they divide is the frame it
@@ -1842,10 +1870,13 @@ func (m Model) frameHead() string {
 	// it would move every pane border under it on the tab switch that hid the
 	// rail, which is the jump the header is here to take out.
 	//
-	// The strip closes the block rather than leading it, sitting on the borders
-	// of the panes it switches: it is navigation for the screen below it, and
-	// the two rows above it name the pull request all four tabs share.
-	lines := []string{m.titleLine(width), m.branchRow(width), "", m.tabStrip(width)}
+	// The strip closes the block rather than leading it: it is navigation for
+	// the screen below it, and the two rows above it name the pull request all
+	// four tabs share. It is held off the pane borders by a blank of its own,
+	// the way the two rows above it are held off the strip: an underline landed
+	// on a border reads as a rule the border grew rather than as a mark on the
+	// tab it sits under.
+	lines := []string{m.titleLine(width), m.branchRow(width), "", m.tabStrip(width), ""}
 	return indent(strings.Join(lines, "\n"), headGutter)
 }
 
@@ -1868,23 +1899,21 @@ func (m Model) tabStrip(width int) string {
 	return strip
 }
 
-// renderTabs lays the segments out. The mark is a cell every tab holds rather
-// than a prefix the current one gains: drawn only on the active tab, every tab
-// to its right would step a column sideways each time the reader changed tab,
-// which is a strip that moves under the key that moves through it.
+// renderTabs lays the segments out. The current tab is underlined rather than
+// marked with a glyph, so it takes no cell of its own and nothing to its right
+// steps sideways as the reader moves through the strip.
 func (m Model) renderTabs(list []comp.Tab) string {
-	active := lipgloss.NewStyle().Foreground(m.theme.Accent).Bold(true)
+	active := lipgloss.NewStyle().Foreground(m.theme.Accent).Bold(true).Underline(true)
 	idle := lipgloss.NewStyle().Foreground(m.theme.Subtle)
 	count := lipgloss.NewStyle().Foreground(m.theme.MutedOrSubtle())
-	mark := lipgloss.NewStyle().Foreground(m.theme.Accent).Render(paint.BarGlyph)
 
 	parts := make([]string, 0, len(list))
 	for i, tab := range list {
-		style, lead := idle, " "
+		style := idle
 		if i == m.tab {
-			style, lead = active, mark
+			style = active
 		}
-		part := lead + style.Render(tab.Label)
+		part := style.Render(tab.Label)
 		if tab.Badge != "" {
 			part += count.Render(" " + tab.Badge)
 		}

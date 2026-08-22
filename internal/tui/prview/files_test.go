@@ -739,11 +739,10 @@ func TestEscBacksOutWithACardLitInTheDiff(t *testing.T) {
 // the swap that is easy to drop.
 func TestTheFileKeyLeavesTheTabStrip(t *testing.T) {
 	m := onFiles(200, 50)
-	active := fgSeq(theme.RosePineMoon.Accent)
 
 	for _, k := range []string{"tab", "shift+tab"} {
-		if !strings.Contains(stripRow(t, press(m, k).View()), active+"mFiles") {
-			t.Errorf("%q moved the tab strip", k)
+		if got := currentTab(t, press(m, k).View()); got != "Files" {
+			t.Errorf("%q moved the tab strip, to %q", k, got)
 		}
 	}
 }
