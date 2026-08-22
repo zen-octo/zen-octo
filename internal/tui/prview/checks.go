@@ -611,13 +611,6 @@ func (m *Model) invalidateJobRender() {
 	m.check.renderToken++
 }
 
-func (m Model) checkTitle() string {
-	if !m.detail.Loaded {
-		return "Checks"
-	}
-	return comp.Plural(len(m.detail.Detail.Rollup.Checks), "check")
-}
-
 func (m Model) checkColumn(width int) string {
 	if !m.detail.Loaded {
 		return ""

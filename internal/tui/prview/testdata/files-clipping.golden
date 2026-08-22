@@ -1,9 +1,9 @@
  #412 Fix the auth retry backoff loop                         3   +42 −7 
- main ← fix-auth-retry                                                    
+ main ← fix-auth-retry              Open · ✗ failing · changes requested 
                                                                           
-  Open · Opened 2 days ago by @drucial     ✗ failing · changes requested 
+ Conversation (24)  Commits  Checks (4)  Files (3)                        
                                                                           
-╭─[1]─4 files──────────╮╭─[2]─Conversation - Commits - Checks - Files────╮
+╭─[1]─Files────────────╮╭─[2]─Diff───────────────────────────────────────╮
 │▾ docs/               ││ internal/gh/client.go                     +2 −1│
 │    screenshot.png    │├────────────────────────────────────────────────┤
 │▾ internal/           ││                                                │

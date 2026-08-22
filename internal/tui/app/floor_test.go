@@ -113,7 +113,7 @@ func TestTheTallestMergeFormFitsTheNarrowestFrame(t *testing.T) {
 		t.Fatal("setup: no config notice, so the frame is a row taller than this is measuring")
 	}
 
-	m := press(sized, "enter", "d", "2", "j", "j", "j", "j", "j")
+	m := press(sized, "enter", "d", "1", "j", "j", "j", "j", "j")
 	if out := stripANSI(render(t, m)); !strings.Contains(out, "Blocked") {
 		t.Fatalf("the rail has no Merge row to stand on:\n%s", out)
 	}

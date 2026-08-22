@@ -69,7 +69,7 @@ func onRailRow(t *testing.T, m prview.Model, want string) prview.Model {
 	// control before walking down, because the cursor stops at each end rather
 	// than coming back round: a caller already standing below the row it wants
 	// would never reach it, and one already on it would step off.
-	m = press(m, "2")
+	m = press(m, "1")
 	m = press(m, strings.Fields(strings.Repeat("k ", 30))...)
 
 	for range 30 {
@@ -297,7 +297,7 @@ func TestEnterOnARowWithNoPickerDoesNothing(t *testing.T) {
 // Nothing opens before the detail answers. The rail draws from the list row
 // then, and its label section is empty.
 func TestNoPickerOpensBeforeTheDetailLands(t *testing.T) {
-	m := press(screen(200, 60), "2")
+	m := press(screen(200, 60), "1")
 	m.SetRepo(loadedRepo())
 
 	m = press(m, "j")

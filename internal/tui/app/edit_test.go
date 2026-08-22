@@ -52,7 +52,7 @@ func onComment(t *testing.T, client *fakeSearcher) tea.Model {
 
 	client.serveDetail("PR_412", "Caps the backoff at 30s.")
 	client.serveComment("PR_412", "IC_1", "Covrage held at 84.2%.")
-	return press(loaded(t, client, 160, 40), "enter", "}", "}")
+	return press(loaded(t, client, 160, 40), "enter", "2", "}")
 }
 
 // The whole of what optimistic means, one write over: the new words are on the
@@ -189,7 +189,7 @@ func TestEditingTheDescriptionWritesThePullRequest(t *testing.T) {
 	client.serveDetail("PR_412", "Caps the backoff at 30s.")
 	client.serveOwnDescription("PR_412", "drucial")
 
-	m := press(loaded(t, client, 160, 40), "enter", "}")
+	m := press(loaded(t, client, 160, 40), "enter", "2")
 	m = press(write(press(m, "e"), " And the retry count."), "ctrl+enter")
 
 	if got := client.describes(); len(got) != 1 ||
@@ -215,7 +215,7 @@ func TestAFailedDescriptionEditKeepsTheWords(t *testing.T) {
 	client.serveDetail("PR_412", "Caps the backoff at 30s.")
 	client.serveOwnDescription("PR_412", "drucial")
 
-	m := press(loaded(t, client, 160, 40), "enter", "}")
+	m := press(loaded(t, client, 160, 40), "enter", "2")
 	m = press(write(press(m, "e"), " And the retry count."), "ctrl+enter")
 
 	out := stripANSI(render(t, m))

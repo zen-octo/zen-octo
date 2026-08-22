@@ -667,15 +667,21 @@ func TestAFocusedCardNamesItsKeysInTheBorder(t *testing.T) {
 	}
 }
 
-// Hints are for the card the keys are going to. On every card at once they are
-// wallpaper.
-func TestAnUnfocusedCardNamesNothing(t *testing.T) {
+// Hints are for the card the keys are going to, and that is one card. On every
+// card at once they are wallpaper.
+func TestOnlyTheFocusedCardNamesItsKeys(t *testing.T) {
 	resting := stripANSI(detailed(held(sampleDetail()), 200, 60).View())
 
-	for _, hint := range []string{"R quote", "r reply", "J/K in thread", "space open"} {
-		if strings.Contains(resting, hint) {
-			t.Errorf("%q is on a page with nothing focused", hint)
+	for _, hint := range []string{"R quote", "r reply", "space open"} {
+		if n := strings.Count(resting, hint); n > 1 {
+			t.Errorf("%q is on %d cards, want the focused one alone", hint, n)
 		}
+	}
+
+	// The thread's own keys belong to a thread card, and the cursor opens on
+	// the description, so none of them is named yet.
+	if strings.Contains(resting, "x resolve") {
+		t.Error("a thread key is named while the cursor is on the description")
 	}
 }
 
@@ -796,9 +802,11 @@ func TestEscClosesTheBoxAndKeepsTheWords(t *testing.T) {
 func TestADraftStaysOnItsOwnThread(t *testing.T) {
 	held := press(typed(replying(t, tabThread, "r"), "capped it"), "esc")
 
-	// esc put the ring back on the thread the box was opened from, so three
-	// tabs reach the next thread that takes a reply.
-	other := press(walked(held, tabOther-tabThread), "r")
+	// esc put the ring back on the thread the box was opened from, so four
+	// steps reach the next thread that takes a reply. Stepped rather than
+	// walked: walked names a card from the top of the page, and this is a move
+	// from wherever the box left the ring.
+	other := press(held, "}", "}", "}", "}", "r")
 
 	out := stripANSI(other.View())
 	if !strings.Contains(out, "write a reply") {

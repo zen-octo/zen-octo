@@ -746,14 +746,6 @@ func (m Model) fileHeading() string {
 	return " " + m.fileHead(*f, "", max(0, m.main.InnerWidth()-1))
 }
 
-// treeTitle names the file column by what it holds.
-func (m Model) treeTitle() string {
-	if !m.files.Loaded {
-		return "Files"
-	}
-	return comp.Plural(len(m.files.Files), "file")
-}
-
 // moveCursor walks the tree and takes the diff with it. The rows are one line
 // each, so keeping the cursor on screen is a clamp rather than the boundary
 // arithmetic a two-line row needs.

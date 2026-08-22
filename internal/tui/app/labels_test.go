@@ -32,7 +32,7 @@ func labelling(t *testing.T, client *fakeSearcher) tea.Model {
 	client.serveLabels("PR_412", repoLabelSet()[:1])
 	client.serveRepoMeta(gh.RepoMeta{Labels: repoLabelSet()})
 
-	return press(loaded(t, client, 160, 40), "enter", "2", "j", "j", "j")
+	return press(loaded(t, client, 160, 40), "enter", "1", "j", "j", "j")
 }
 
 func openLabelPicker(t *testing.T, client *fakeSearcher) tea.Model {
@@ -187,7 +187,7 @@ func TestEachRepositoryGetsItsOwnChoices(t *testing.T) {
 
 	// The list's own sort decides which opens first, so each step names the pull
 	// request it landed on rather than assuming an order.
-	m := press(loaded(t, client, 160, 40), "enter", "2", "j", "j", "j", "enter")
+	m := press(loaded(t, client, 160, 40), "enter", "1", "j", "j", "j", "enter")
 	first := stripANSI(render(t, m))
 	if !strings.Contains(first, "#9 Other repo") {
 		t.Fatalf("the list opened a different pull request first:\n%s", first)
@@ -199,7 +199,7 @@ func TestEachRepositoryGetsItsOwnChoices(t *testing.T) {
 		t.Errorf("the website picker is showing the other repository's labels:\n%s", first)
 	}
 
-	m = press(m, "esc", "esc", "esc", "j", "enter", "2", "j", "j", "j", "enter")
+	m = press(m, "esc", "esc", "esc", "j", "enter", "1", "j", "j", "j", "enter")
 
 	second := stripANSI(render(t, m))
 	if !strings.Contains(second, "#412") {

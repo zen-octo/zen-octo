@@ -78,7 +78,7 @@ func (p Painter) Line(l Line, gutter, width int) string {
 		oldNum = kind
 	}
 
-	row := lead(l.Bar, base) +
+	row := Lead(l.Bar, base) +
 		oldNum.Render(number(l.Old, gutter)) + base.Render(" ") +
 		newNum.Render(number(l.New, gutter)) + base.Render(" ") +
 		kind.Render(marker) + base.Render(" ") + p.code(l.Tokens, base)
@@ -109,7 +109,7 @@ func (p Painter) Half(l Line, gutter, width int) string {
 		num = kind
 	}
 
-	row := lead(l.Bar, base) + num.Render(number(max(l.Old, l.New), gutter)) +
+	row := Lead(l.Bar, base) + num.Render(number(max(l.Old, l.New), gutter)) +
 		base.Render(" ") + kind.Render(marker) + base.Render(" ") +
 		p.code(l.Tokens, base)
 
@@ -193,7 +193,7 @@ func (p Painter) header(h Header, code, width int) string {
 		badge = base.Foreground(h.BadgeColor)
 	}
 
-	row := lead(h.Bar, base) +
+	row := Lead(h.Bar, base) +
 		base.Render(strings.Repeat(" ", max(0, code-2*markerSlot-1))) +
 		slot(h.Badge, base, badge) + slot(h.Marker, base, text) +
 		text.Render(h.Text)
@@ -206,16 +206,23 @@ func (p Painter) header(h Header, code, width int) string {
 	return row
 }
 
-// barGlyph marks the row the cursor is on. It goes in the leading cell every row
+// BarGlyph marks the row the cursor is on. It goes in the leading cell every row
 // already holds open, so a row gains no width by being the one under the cursor.
-const barGlyph = "▌"
+//
+// Exported so the rail and the tests reading either pane name it rather than
+// repeating the rune, which is a cutset in three helpers and easy to miss one of.
+const BarGlyph = "▌"
 
-// lead is a row's first cell: the bar, or the blank every other row keeps there.
-func lead(bar color.Color, base lipgloss.Style) string {
+// Lead is a row's first cell: the bar, or the blank every other row keeps there.
+//
+// Exported for the details rail, which marks its cursor line the same way and
+// holds a gutter of its own for it. One glyph, so a reader crossing from the
+// diff to the rail is not asked to learn a second mark for the same fact.
+func Lead(bar color.Color, base lipgloss.Style) string {
 	if bar == nil {
 		return base.Render(" ")
 	}
-	return base.Foreground(bar).Render(barGlyph)
+	return base.Foreground(bar).Render(BarGlyph)
 }
 
 // slot renders one glyph in a fixed pair of columns, blank when there is none.

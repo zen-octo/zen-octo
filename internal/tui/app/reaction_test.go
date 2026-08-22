@@ -40,7 +40,7 @@ func reactingOn(t *testing.T, client *fakeSearcher) tea.Model {
 	client.serveDetail("PR_412", "Caps the backoff at 30s.")
 	client.serveReactable("PR_412")
 
-	return press(loaded(t, client, 160, 40), "enter", "}", "}", "+")
+	return press(loaded(t, client, 160, 40), "enter", "2", "}", "+")
 }
 
 // The pill moves before GitHub has seen it, which is the whole of what

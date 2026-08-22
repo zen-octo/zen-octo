@@ -1643,18 +1643,29 @@ func (m Model) refreshRunning() bool {
 	return m.detailRefreshing.running() || len(m.refreshing) > 0
 }
 
-// statusReadout is the right side the rest of the time, and the remaining
-// budget is all of it: a number worth reading only once it has run low.
+// statusReadout is the right side the rest of the time: the remaining budget
+// while it is low enough to be worth reading, and otherwise whatever the screen
+// in front of the reader has to say.
 //
-// Neither screen names itself here any more. The list's section is the current
-// tab in the top border and the detail's pull request is in its own header, so
-// both were spending the line on a fact already on the screen, and the side
-// they were spending it on is where a toast lands.
+// Neither screen names itself here. The list's section is the current tab in the
+// top border and the detail's pull request is in its own header, so both were
+// spending the line on a fact already on the screen. Who opened the pull request
+// and when is not one of those any more: the header is two lines now and does
+// not carry it, which is what makes this side the place for it.
+//
+// The budget wins. It is a number that changes and runs out, and the readout
+// under it is a fact that does not.
 func (m Model) statusReadout() string {
 	// Limit is zero until a response lands. Gating on it rather than on
 	// Remaining is what lets an exhausted budget still read as zero.
 	if rate := m.store.Rate(); rate.Limit > 0 {
-		return m.status.Budget(rate.Remaining)
+		if budget := m.status.Budget(rate.Remaining); budget != "" {
+			return budget
+		}
+	}
+	if m.screen == screenDetail {
+		return lipgloss.NewStyle().Foreground(m.theme.MutedOrSubtle()).
+			Render(m.detail.Readout())
 	}
 	return ""
 }

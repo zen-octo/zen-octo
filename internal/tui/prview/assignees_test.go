@@ -145,7 +145,7 @@ func TestTheRingWalksPastTheAssigneesWithoutPermission(t *testing.T) {
 	d := sampleDetail()
 	d.Viewer.CanAssign = false
 
-	m := press(detailed(held(d), 200, 60), "2")
+	m := press(detailed(held(d), 200, 60), "1")
 	for range 20 {
 		m = press(m, "j")
 		if got := markedRailRow(t, m.View()); got == "@drucial" || got == "+ Add assignee" {

@@ -43,7 +43,7 @@ func toMergeRow(t *testing.T, client *fakeSearcher) tea.Model {
 		Methods: gh.MergeMethods{Merge: true, Squash: true, Rebase: true},
 	})
 
-	m := press(loaded(t, client, 160, 44), "enter", "2",
+	m := press(loaded(t, client, 160, 44), "enter", "1",
 		"j", "j", "j", "j", "j")
 	if out := stripANSI(render(t, m)); !strings.Contains(out, "Ready to merge") {
 		t.Fatalf("the rail has no Merge row to stand on:\n%s", out)

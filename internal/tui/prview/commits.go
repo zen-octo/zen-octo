@@ -160,15 +160,6 @@ func (m Model) underCursor() (string, bool) {
 	return list[m.commit.cursor].SHA, true
 }
 
-// commitTitle counts what the column holds, or names it before the detail query
-// answers and there is nothing to count.
-func (m Model) commitTitle() string {
-	if !m.detail.Loaded {
-		return "Commits"
-	}
-	return comp.Plural(len(m.detail.Detail.Commits), "commit")
-}
-
 // commitColumn is the list. It paints its own selection, so it hands the
 // viewport lines already the full inner width.
 func (m Model) commitColumn(width int) string {

@@ -18,7 +18,7 @@ func moving(t *testing.T, client *fakeSearcher) tea.Model {
 
 	client.serveDetail("PR_412", "Caps the backoff at 30s.")
 
-	return press(loaded(t, client, 160, 40), "enter", "2")
+	return press(loaded(t, client, 160, 40), "enter", "1")
 }
 
 // openStateMenu opens the rail's state menu. Nothing is fetched for it, unlike

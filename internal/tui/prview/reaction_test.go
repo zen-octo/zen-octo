@@ -458,13 +458,25 @@ func TestTheReactionListDoesNotBreakTheFrameWidth(t *testing.T) {
 }
 
 // rowFor is the line of a rendered frame holding a marker.
+// The picker's own cells, not the whole frame line. A modal is drawn over the
+// screen rather than into it, so the line it lands on still carries the rail and
+// the page either side of it, and the rail's Changes row is a column of digits
+// that a test asking whether a row is numbered would find.
 func rowFor(t *testing.T, frame, marker string) string {
 	t.Helper()
 
 	for _, line := range strings.Split(frame, "\n") {
-		if strings.Contains(line, marker) {
+		at := strings.Index(line, marker)
+		if at < 0 {
+			continue
+		}
+		// The modal's border either side of the text it holds.
+		open := strings.LastIndex(line[:at], "│")
+		shut := strings.Index(line[at:], "│")
+		if open < 0 || shut < 0 {
 			return line
 		}
+		return line[open : at+shut]
 	}
 	t.Fatalf("no line holds %q:\n%s", marker, frame)
 	return ""

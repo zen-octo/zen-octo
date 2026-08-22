@@ -73,7 +73,7 @@ func TestAPulseDroppedByAWriteIsAskedAgain(t *testing.T) {
 	}
 
 	// Convert to draft while that answer is on its way.
-	m = press(m, "2", "enter", "enter")
+	m = press(m, "1", "enter", "enter")
 	client.serveMergeable("PR_412")
 
 	before := len(client.pulsed())

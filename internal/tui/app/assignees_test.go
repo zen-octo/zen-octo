@@ -31,7 +31,7 @@ func assigning(t *testing.T, client *fakeSearcher) tea.Model {
 	client.serveAssignees("PR_412", repoUserSet()[:1])
 	client.serveRepoMeta(gh.RepoMeta{Users: repoUserSet()})
 
-	return press(loaded(t, client, 160, 40), "enter", "2", "j", "j")
+	return press(loaded(t, client, 160, 40), "enter", "1", "j", "j")
 }
 
 func openAssigneePicker(t *testing.T, client *fakeSearcher) tea.Model {

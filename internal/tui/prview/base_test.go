@@ -293,7 +293,7 @@ func TestTheBaseRowNamesTheBaseWithNothingToCompare(t *testing.T) {
 func railStops(t *testing.T, d gh.PullRequestDetail) []string {
 	t.Helper()
 
-	m := press(detailed(held(d), 200, 60), "2")
+	m := press(detailed(held(d), 200, 60), "1")
 	var out []string
 	for range 30 {
 		m = press(m, "j")

@@ -87,8 +87,10 @@ func TestTheCommitColumnNamesEveryCommit(t *testing.T) {
 		}
 	}
 
-	if !strings.Contains(out, "3 commits") {
-		t.Error("the column is not titled with its count")
+	// The count is on the strip now, which can say all four where a column can
+	// only ever say its own.
+	if !strings.Contains(out, "Commits") {
+		t.Error("the column is not titled")
 	}
 }
 

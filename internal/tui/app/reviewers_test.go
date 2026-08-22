@@ -23,7 +23,7 @@ func reviewing(t *testing.T, client *fakeSearcher) tea.Model {
 	client.serveDetail("PR_412", "Caps the backoff at 30s.")
 	client.serveRepoMeta(gh.RepoMeta{Users: repoUserSet()})
 
-	return press(loaded(t, client, 160, 40), "enter", "2", "j")
+	return press(loaded(t, client, 160, 40), "enter", "1", "j")
 }
 
 func openReviewerPicker(t *testing.T, client *fakeSearcher) tea.Model {
@@ -91,7 +91,7 @@ func TestCancellingAReviewRequestSaysSo(t *testing.T) {
 	client.serveRepoMeta(gh.RepoMeta{Users: repoUserSet()})
 	client.serveReviewers("PR_412", []gh.Reviewer{{Actor: gh.Actor{Login: "nkr"}, Requested: true}})
 
-	m := press(loaded(t, client, 160, 40), "enter", "2", "j", "enter")
+	m := press(loaded(t, client, 160, 40), "enter", "1", "j", "enter")
 	m = press(m, "down", "space", "enter") // uncheck @nkr
 
 	if !strings.Contains(lastLine(render(t, m)), "Cancelled 1 review request") {
@@ -171,7 +171,7 @@ func TestSwappingReviewersCancelsBeforeItAsks(t *testing.T) {
 	client.serveRepoMeta(gh.RepoMeta{Users: repoUserSet()})
 	client.serveReviewers("PR_412", []gh.Reviewer{{Actor: gh.Actor{Login: "nkr"}, Requested: true}})
 
-	m := press(loaded(t, client, 160, 40), "enter", "2", "j", "enter")
+	m := press(loaded(t, client, 160, 40), "enter", "1", "j", "enter")
 	m = press(m, "space", "down", "space", "enter") // check Copilot, uncheck @nkr
 
 	want := []string{
@@ -201,7 +201,7 @@ func TestAReviewerWriteThatFailsHalfwayCorrectsTheRail(t *testing.T) {
 	client.serveRepoMeta(gh.RepoMeta{Users: repoUserSet()})
 	client.serveReviewers("PR_412", []gh.Reviewer{{Actor: gh.Actor{Login: "nkr"}, Requested: true}})
 
-	m := press(loaded(t, client, 160, 40), "enter", "2", "j", "enter")
+	m := press(loaded(t, client, 160, 40), "enter", "1", "j", "enter")
 	before := len(client.opened())
 	m = press(m, "space", "down", "space", "enter") // request Copilot, cancel @nkr
 

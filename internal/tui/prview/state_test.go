@@ -35,7 +35,7 @@ func onStateRow(t *testing.T, m prview.Model) prview.Model {
 	// Back to the first control before walking down. The cursor stops at each
 	// end rather than coming back round, so a caller already standing below the
 	// State row would never reach it.
-	m = press(m, "2")
+	m = press(m, "1")
 	m = press(m, strings.Fields(strings.Repeat("k ", 30))...)
 	for range 30 {
 		if isStateRow(markedRailRow(t, m.View())) {
@@ -67,7 +67,7 @@ func isStateRow(row string) bool {
 func reachesStateRow(t *testing.T, m prview.Model) bool {
 	t.Helper()
 
-	m = press(m, "2")
+	m = press(m, "1")
 	m = press(m, strings.Fields(strings.Repeat("k ", 30))...)
 	for range 30 {
 		if isStateRow(markedRailRow(t, m.View())) {

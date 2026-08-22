@@ -80,7 +80,7 @@ func TestTheMentionListCostsOneRequestForTheWholeSession(t *testing.T) {
 	})
 
 	// Open the label picker from the rail first, then leave it.
-	m := press(loaded(t, client, 160, 40), "enter", "2", "j", "j", "j", "enter")
+	m := press(loaded(t, client, 160, 40), "enter", "1", "j", "j", "j", "enter")
 	if out := stripANSI(render(t, m)); !strings.Contains(out, "space toggle") {
 		t.Fatalf("setup: the label picker did not open:\n%s", out)
 	}

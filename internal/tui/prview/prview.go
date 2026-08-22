@@ -118,11 +118,12 @@ type RailPreference struct {
 	Set bool
 }
 
-// columnWidth is the side column on either edge of the screen: the details rail
-// on the conversation, the file tree on the diff, the commit list on the
-// commits. One number serves all three. They never share a frame, so the only
-// place the difference shows is in the jump when you tab between them, and
-// there it reads as a mistake.
+// columnWidth is the column down the left of the screen: the details rail on
+// the conversation, the file tree on the diff, the commit list on the commits.
+// One number serves all three, and one edge does too. They never share a frame,
+// so the only place either difference shows is in the jump when you change tab,
+// and there it reads as a mistake: the rail sat on the right until it was the
+// only secondary pane that did.
 //
 // It is fixed rather than proportional: a column that grows with the frame just
 // moves the content around. Wide enough for a branch name, which is the longest
@@ -140,9 +141,29 @@ const railColumnFrom = columnWidth + 40
 // railGutter is the space between the rail's left border and what it holds.
 // Text against a border reads as a rendering fault rather than as a column.
 //
+// Two cells, and the cursor bar takes the first of them. One was enough while
+// the gutter was blank, and left the bar against the row it marks: a dot or a
+// glyph leading a name then sat on the bar rather than beside it, which reads
+// as one mark rather than a row that has been marked. The second cell is what
+// the headings indent by too, so a name lines up whether or not it is the row
+// the cursor is on.
+//
 // The right side is railNameRoom's business: a row runs the full width so the
 // cursor line reaches the border, and it is the name that stops short.
-const railGutter = 1
+const railGutter = 2
+
+// branchMeasure caps the whole branch line, both names and the arrow between
+// them. A wide terminal is not a reason to spend all of it on two refs, and the
+// line reads as a pair rather than as a sentence running the frame.
+//
+// The room is shared rather than split. A name inside its share is never cut,
+// and what it leaves goes to the other one, so merging a long branch into main
+// spends four columns on main and the rest on the name worth reading. Two long
+// names take half each, which is the only answer when neither will fit.
+//
+// A cut takes the tail. The key these names carry sits at the front, so what
+// goes is the sentence after it and never which pull request this is.
+const branchMeasure = 96
 
 // contentMeasure caps the conversation and centres it. Text set the full width
 // of a wide terminal is a paragraph the eye loses its place in on every line.
@@ -156,8 +177,7 @@ const contentMeasure = 90
 const sideMin = 24
 
 // treeMinFrame is the width below which a left column hides. Under it the pane
-// beside it is down to a gutter and a fragment, and the tab strip above it no
-// longer fits the frame at all.
+// beside it is down to a gutter and a fragment.
 const treeMinFrame = 70
 
 // diffMeasure is the width the diff keeps before the tree gives any up. Below
@@ -181,7 +201,11 @@ const headRoom = 3
 type pane int
 
 const (
-	paneSide pane = iota
+	// paneNone leads so that it is the zero value: the slice parking a pane per
+	// tab is then a slice of tabs nobody has opened, which is what it is before
+	// anybody presses anything. Nothing focuses it.
+	paneNone pane = iota
+	paneSide
 	paneMain
 	paneRail
 )
@@ -194,7 +218,8 @@ const (
 	tabFiles   = 3
 )
 
-// tabs on the detail screen.
+// tabs on the detail screen. The counts are filled in per render by tabCounts;
+// these are the labels and the order.
 var tabs = []comp.Tab{
 	{Label: "Conversation"},
 	{Label: "Commits"},
@@ -271,6 +296,17 @@ type Model struct {
 	// a push fetch the change rather than the one before it.
 	filesAsked bool
 
+	// led is whether the screen has been through the layout it arrives on. It
+	// happens there rather than in New, because which pane leads is a question
+	// about a frame and New has not been given one.
+	//
+	// It says arrived rather than handed over, and the difference is a frame
+	// that opens too narrow for a second pane. Latched on having found a lead,
+	// a reader working in the only pane there was would have the keys taken off
+	// them by the first widen past railMinFrame, which is the terminal getting
+	// bigger and not an arrival at all.
+	led bool
+
 	// jump is the review thread v is on its way to, empty when there is none.
 	// The diff costs a request of its own, so a jump made before it has ever
 	// been asked for waits here and lands when the answer arrives.
@@ -295,6 +331,15 @@ type Model struct {
 	// and switching back lands at the top of a conversation you were halfway
 	// down.
 	offsets []int
+
+	// panes parks which pane the reader had the keys on, per tab. Focus is one
+	// field where the scroll is four, so without this a round trip through a
+	// tab that takes its own column comes back having lost the choice: the
+	// column goes off screen and focus falls to whatever is left.
+	//
+	// A tab nobody has been to yet holds paneNone, which is what lets Commits
+	// and Checks take their column on arrival and only on arrival.
+	panes []pane
 
 	// compose is the box a comment is written in: the last card in the
 	// conversation, always on the page.
@@ -393,6 +438,7 @@ func New(th theme.Theme, pr gh.PullRequest, rail RailPreference, syntax syntax.S
 		collapsed:   make(map[string]bool),
 		open:        make(map[focusKey]bool),
 		offsets:     make([]int, len(tabs)),
+		panes:       make([]pane, len(tabs)),
 		railOn:      rail.On,
 		railUserSet: rail.Set,
 	}
@@ -670,11 +716,12 @@ func (m Model) handleKey(keyMsg tea.KeyPressMsg) (Model, tea.Cmd) {
 			m.clearCheckSearch()
 			return m, nil
 		}
-		// Letting go of a card and leaving the screen are two intentions on one
-		// key. The narrower one goes first.
-		if m.clearFocus() {
-			return m, nil
-		}
+		// Esc leaves, and that is the whole of it. Letting go of a card used to
+		// come first, on the argument that the narrower intention wins the key.
+		// But a cursor is landed now wherever there is something to land it on,
+		// so there is always something to let go of, and the reader who wanted
+		// the list was paying two presses for it every time. A cursor that
+		// always exists is not a thing to be dismissed.
 		return m, func() tea.Msg { return BackMsg{} }
 
 	case key.Matches(keyMsg, k.Sync):
@@ -803,11 +850,11 @@ func (m Model) handleKey(keyMsg tea.KeyPressMsg) (Model, tea.Cmd) {
 	// pane that took the key keeps the focus it already had.
 	case key.Matches(keyMsg, k.PaneLeft):
 		if !m.stepColumn(gh.SideLeft) {
-			m.focusPane(m.focus - 1)
+			m.stepPane(-1)
 		}
 	case key.Matches(keyMsg, k.PaneRight):
 		if !m.stepColumn(gh.SideRight) {
-			m.focusPane(m.focus + 1)
+			m.stepPane(1)
 		}
 	case key.Matches(keyMsg, k.SplitView) && m.tab == tabFiles:
 		return m, m.toggleSplit()
@@ -841,7 +888,7 @@ func (m Model) handleKey(keyMsg tea.KeyPressMsg) (Model, tea.Cmd) {
 			m.focus = paneMain
 		}
 		m.layout()
-		m.railLand()
+		m.landCursor()
 
 	case key.Matches(keyMsg, k.Down):
 		m.move(1)
@@ -1050,6 +1097,7 @@ func (m *Model) changeTab(delta int) tea.Cmd {
 // conversation into the diff owes the screen everything a tab switch does.
 func (m *Model) goToTab(at int) tea.Cmd {
 	m.offsets[m.tab] = m.view.YOffset()
+	m.panes[m.tab] = m.focus
 	m.tab = at
 
 	// The conversation is the only tab a box is drawn on, so a popup anchored to
@@ -1062,11 +1110,22 @@ func (m *Model) goToTab(at int) tea.Cmd {
 	m.view.SetYOffset(m.offsets[m.tab])
 	m.showSideCursor()
 
+	// A tab gives back the pane the reader left it on. Focus is one field where
+	// the scroll is four, and a tab that takes its own column takes the focus
+	// with it, so without this the way back is a pane nobody chose: the column
+	// leaves the screen and layout puts the keys wherever is left.
+	//
+	// The leading pane takes the keys on the way in to the screen and not here.
+	// A reader changing tab has already chosen a pane, and handing the keys back
+	// to the rail on every press of the strip makes them ask for the page again
+	// each time they come round to it.
+	m.focusPane(m.panes[m.tab])
+
 	// Commits opens with an empty diff pane, so the column is the only thing on
 	// the tab there is anything to do with. Checks opens on a full pane, but
-	// every key a reader presses there is picking a workflow. The other two open
-	// on content worth reading and leave focus on the pane holding it.
-	if (m.tab == tabCommits || m.tab == tabChecks) && m.sideVisible() {
+	// every key a reader presses there is picking a workflow. On arrival alone,
+	// because a reader who walked off the column once meant it.
+	if m.panes[m.tab] == paneNone && (m.tab == tabCommits || m.tab == tabChecks) && m.sideVisible() {
 		m.focus = paneSide
 		m.syncContent()
 	}
@@ -1082,6 +1141,15 @@ func (m *Model) goToTab(at int) tea.Cmd {
 
 	id := m.pr.ID
 	return func() tea.Msg { return NeedFilesMsg{ID: id} }
+}
+
+// leadPane gives the keys to the leftmost pane on screen. A lone pane is
+// already holding them, so this is only ever a move onto a column or the rail,
+// and a frame too narrow for a second one has no lead to give.
+func (m *Model) leadPane() {
+	if panes := m.visiblePanes(); len(panes) > 1 {
+		m.focusPane(panes[0])
+	}
 }
 
 // focusRing is the ring the focused pane walks, with the viewport it scrolls
@@ -1122,8 +1190,12 @@ func (m *Model) stepFocus(delta int) bool {
 // walkDiff steps the diff's ring, taking the main pane first. A reader asking
 // for the next block is asking for the pane the blocks are in.
 func (m *Model) walkDiff(delta int) {
-	if m.focus != paneMain {
-		m.focusPane(paneMain)
+	// Taking the pane can land the cursor on a block, and that landing is the
+	// move the key asked for. Stepping again on top of it would skip the first
+	// block on the page, which is the one a reader pressing a brace from the
+	// column means.
+	if m.focus != paneMain && m.focusPane(paneMain) {
+		return
 	}
 
 	// A block is what the braces name, so they land on its own head rather than
@@ -1152,34 +1224,6 @@ func (m *Model) showFocus(r *ring, vp *viewport.Model, top int) {
 // on the way out moves the page a line at the top of a scrollable pane, on a
 // keypress that was meant to leave it alone.
 func bodyTop(vp *viewport.Model) int { return vp.YOffset() - contentLead }
-
-// clearFocus lets go of a focus the reader can see, and reports whether there
-// was one. Both rings, because focus survives a move to the other pane and esc
-// should not have to be pressed once per ring.
-//
-// A focus that is not on the screen is not one to let go of. Swallowing esc for
-// a highlight nowhere on the frame reads as a key that does nothing, and the
-// tabs with a column show no ring at all.
-func (m *Model) clearFocus() bool {
-	if !m.ringTab() {
-		return false
-	}
-
-	cleared := false
-	for _, r := range []struct {
-		ring *ring
-		vp   *viewport.Model
-	}{{&m.pageRing, &m.view}, {&m.railRing, &m.railView}} {
-		if r.ring.live(bodyTop(r.vp), r.vp.Height()) && r.ring.clear() {
-			cleared = true
-		}
-	}
-
-	if cleared {
-		m.syncContent()
-	}
-	return cleared
-}
 
 // toggleBlockFold moves the focused prose or hunk from its resting fold state.
 // There is nothing to move with no block focused, and rail rows answer to it
@@ -1237,52 +1281,91 @@ func (m Model) foldTarget() focusKey {
 	return m.mainRing().on
 }
 
-// focusPane moves focus to a pane, skipping whatever is not on screen. Focus
-// walks left to right, which is the order the panes are numbered in.
-func (m *Model) focusPane(want pane) {
-	for _, p := range []pane{paneSide, paneMain, paneRail} {
-		if p == want && m.paneVisible(p) {
-			m.focus = p
-			m.syncContent()
-			m.railLand()
-			return
+// visiblePanes is the panes on screen, left to right. It is the one place that
+// order is written down.
+//
+// The enum cannot carry it. The rail and the column both sit on the left and
+// are never on screen together, so stepping focus by adding one to the enum is
+// right on whichever kind of tab the order was written for and wrong on the
+// other.
+func (m Model) visiblePanes() []pane {
+	out := make([]pane, 0, 2)
+	for _, p := range []pane{paneRail, paneSide, paneMain} {
+		if m.paneVisible(p) {
+			out = append(out, p)
 		}
+	}
+	return out
+}
+
+// focusPane moves focus to a pane, and does nothing where that pane is not on
+// screen.
+//
+// It reports whether taking the pane also landed a cursor, so a caller that was
+// going to step can tell the arrival was the step.
+func (m *Model) focusPane(want pane) bool {
+	if !m.paneVisible(want) {
+		return false
+	}
+	m.focus = want
+	m.syncContent()
+	return m.landCursor()
+}
+
+// stepPane moves focus one pane along the screen. Both ends are boundaries
+// rather than seams, which is what every other cursor here does.
+//
+// A focus that is on no visible pane takes the key and does nothing, and it
+// cannot arise: layout puts the focus back on the main pane whenever the one
+// holding it leaves the screen, and layout runs on every resize and every tab
+// change. The loop is written to fall out rather than to assume it, because
+// what makes it safe is forty lines away in another function.
+func (m *Model) stepPane(delta int) {
+	panes := m.visiblePanes()
+	for i, p := range panes {
+		if p != m.focus {
+			continue
+		}
+		if next := i + delta; next >= 0 && next < len(panes) {
+			m.focusPane(panes[next])
+		}
+		return
 	}
 }
 
-// railLand puts the cursor on the rail's first row when the pane takes the keys
-// with nothing on it. The line is what says where the keys are going, and a
+// landCursor puts the cursor on the first stop of whichever ring has the keys,
+// when it has none. What is lit is what says where the next key acts, and a
 // pane that has to be pressed once before it will say so is one the reader has
 // to guess at.
 //
-// A cursor already on the rail is left where it is. Coming back to a pane and
-// finding it at the top would throw away the row the reader walked to.
-func (m *Model) railLand() {
-	if m.focus != paneRail || !m.railVisible() || m.railRing.index() >= 0 {
-		return
+// The rail always did this. The conversation and the diff did not: both opened
+// with nothing lit at all, so the first press of a motion key was spent
+// arriving rather than moving.
+//
+// A cursor already placed is left where it is. Coming back to a pane and
+// finding it at the top would throw away the row the reader walked to, and a
+// refetch is not a reason to move anybody.
+//
+// It reports whether it placed one, because arriving somewhere is a move: a
+// caller that was about to step has already had what it asked for.
+func (m *Model) landCursor() bool {
+	r, _ := m.focusRing()
+	if r == nil || r.index() >= 0 {
+		return false
 	}
-	m.stepFocus(1)
+	return m.stepFocus(1)
 }
 
 // focusIndex answers a digit with the pane sitting in that position. The panes
-// are numbered by where they are rather than by what they hold, so 2 is the
-// diff on the tabs with a column and the rail on the ones without.
+// are numbered by where they are rather than by what they hold, so 1 is the
+// column or the rail, whichever this tab has, and 2 is what it sits beside.
 func (m *Model) focusIndex(digit string) {
 	n, err := strconv.Atoi(digit)
 	if err != nil {
 		return
 	}
-	at := 0
-	for _, p := range []pane{paneSide, paneMain, paneRail} {
-		if !m.paneVisible(p) {
-			continue
-		}
-		if at++; at == n {
-			m.focus = p
-			m.syncContent()
-			m.railLand()
-			return
-		}
+	if panes := m.visiblePanes(); n >= 1 && n <= len(panes) {
+		m.focusPane(panes[n-1])
 	}
 }
 
@@ -1292,8 +1375,12 @@ func (m Model) paneVisible(p pane) bool {
 		return m.sideVisible()
 	case paneRail:
 		return m.railVisible()
+	case paneMain:
+		return true
 	}
-	return true
+	// paneNone is a tab nobody has opened, not a pane. Answering true here puts
+	// the keys on it the first time a tab hands its parked pane back.
+	return false
 }
 
 // scroll is the viewport the movement keys drive. Focus decides, which is what
@@ -1329,9 +1416,12 @@ func (m *Model) layout() {
 	m.conv.ok = false
 
 	// Focus follows the panes: a tab switch or a resize can take the one that
-	// had it off the screen.
+	// had it off the screen. It lands on the leading pane rather than on the
+	// main one, because the rail and the file column are exclusive and sit in
+	// the same place: a column going away leaves whatever stands where it stood,
+	// and on a tab with nothing beside the page that is the page itself.
 	if !m.paneVisible(m.focus) {
-		m.focus = paneMain
+		m.focus = m.visiblePanes()[0]
 	}
 
 	// The header is pinned above the panes, so what they divide is the frame it
@@ -1367,6 +1457,25 @@ func (m *Model) layout() {
 	// it, so the viewport is short by whatever the pane spends on it.
 	m.view.SetHeight(max(0, m.main.InnerHeight()-(m.main.Above()-1)))
 	m.syncContent()
+
+	// The leading pane takes the keys, once, on the way in. It is the one the
+	// reader navigates with, and it is numbered first because it is where the
+	// eye lands. Only here: a reader who has moved has chosen a pane, and this
+	// runs on every resize.
+	//
+	// The arrival is what is marked, not the handover. A frame with no width
+	// yet has not arrived anywhere, and one too narrow for a second pane has
+	// arrived with no lead to take: both are settled here rather than later, or
+	// widening the terminal would move the keys under a reader mid-page.
+	if !m.led && m.width > 0 {
+		m.led = true
+		m.leadPane()
+	}
+
+	// Last, because a ring has no stops until a body has been rendered into it.
+	// Every arrival runs through here: a resize, a detail, a diff, a tab switch.
+	// So this is the one place that has to remember.
+	m.landCursor()
 }
 
 // railVisible is whether the rail is on screen. Width decides until the reader
@@ -1602,26 +1711,20 @@ func (m Model) railDetail() gh.PullRequestDetail {
 // more than one of them, because a lone pane numbered [1] is just noise, and
 // they are numbered left to right rather than by what they hold.
 func (m Model) View() string {
-	index, at := make(map[pane]int), 0
-	for _, p := range []pane{paneSide, paneMain, paneRail} {
-		if m.paneVisible(p) {
-			at++
-			index[p] = at
+	index := map[pane]int{}
+	if panes := m.visiblePanes(); len(panes) > 1 {
+		for i, p := range panes {
+			index[p] = i + 1
 		}
 	}
-	if at < 2 {
-		index = map[pane]int{}
-	}
 
-	// The tab strip goes on the main pane rather than on the column beside it:
-	// the strip is wider than the column and would clip to a fragment there.
 	mainView := m.view.View()
 	if m.tab == tabChecks {
 		mainView = m.paintCheckCursor(mainView)
 	}
 	panes := []string{m.main.
 		Index(index[paneMain]).
-		Tabs(tabs, m.tab).
+		Title(m.mainTitle()).
 		Header(m.mainHeading()).
 		Footer(scrollFooter(m.view)).
 		Focus(m.focus == paneMain).
@@ -1647,7 +1750,7 @@ func (m Model) View() string {
 			Render(m.railView.View())
 	}
 	if m.railColumn() && rail != "" {
-		panes, rail = append(panes, rail), ""
+		panes, rail = append([]string{rail}, panes...), ""
 	}
 
 	// The overlays composite against the whole screen, so the header goes on
@@ -1659,10 +1762,10 @@ func (m Model) View() string {
 		lead = strings.Count(head, "\n") + 1
 	}
 
-	// Against the right edge rather than centred: it is a column that ran out of
-	// room for one, and the eye looks for it where it sits on a wide frame.
+	// Against the left edge rather than centred: it is a column that ran out of
+	// room for one, and it lands where that column would have been.
 	if rail != "" {
-		frame = comp.At(frame, rail, m.width-columnWidth, lead, m.width, m.height)
+		frame = comp.At(frame, rail, 0, lead, m.width, m.height)
 	}
 
 	// The mention popup goes on first, so a picker or the merge form composites
@@ -1720,16 +1823,30 @@ func (m *Model) sideBody(width int) string {
 	return m.treeBody(width)
 }
 
-// sideTitle names the column by what it holds, since the tab strip beside it
-// already says which tab this is.
+// sideTitle names the column by what it holds. It carries no count any more:
+// the strip above carries all four, where the column could only ever say its
+// own, and the same number in both places is one of them saying nothing.
 func (m Model) sideTitle() string {
 	switch m.tab {
 	case tabCommits:
-		return m.commitTitle()
+		return "Commits"
 	case tabChecks:
-		return m.checkTitle()
+		return "Checks"
 	}
-	return m.treeTitle()
+	return "Files"
+}
+
+// mainTitle names the pane by what it holds rather than by the tab it is under.
+// The strip already says which tab this is, and a border repeating it spends
+// itself on a fact the reader can see a row above.
+func (m Model) mainTitle() string {
+	switch m.tab {
+	case tabCommits, tabFiles:
+		return "Diff"
+	case tabChecks:
+		return "Log"
+	}
+	return "Feed"
 }
 
 // frameHead is the header block every GitHub PR page leads with, before the
@@ -1737,20 +1854,102 @@ func (m Model) sideTitle() string {
 // on screen before the detail query answers.
 //
 // It sits above the panes rather than inside one, so it names the pull request
-// on every tab and holds its column when a tab opens a left column under it. It
-// closes on a blank rather than a rule: the pane border below is already a
-// horizontal, and a second one a row above it read as a box that had come open.
+// on every tab and holds its column when a tab opens a left column under it.
+// The blank inside it is a blank rather than a rule: the pane border below is
+// already a horizontal, and a second one two rows above it read as a box that
+// had come open.
 func (m Model) frameHead() string {
 	width := m.headWidth()
 
-	// The blank sets the status apart from the two lines naming the pull
-	// request. Three stacked lines read as one block and the eye skips the last.
+	// Two lines and four corners, one group of facts in each: what it is and how
+	// big, then where it is going and how it is doing. Who opened it and when is
+	// the group that went, to the status bar: it is read once, and the bar's
+	// right side is empty the rest of the time.
 	//
 	// The same lines whatever the rail is doing. A row that came and went with
 	// it would move every pane border under it on the tab switch that hid the
 	// rail, which is the jump the header is here to take out.
-	lines := []string{m.titleLine(width), m.branchLine(width), "", m.statusLine(width)}
-	return indent(strings.Join(append(lines, ""), "\n"), headGutter)
+	//
+	// The strip closes the block rather than leading it: it is navigation for
+	// the screen below it, and the two rows above it name the pull request all
+	// four tabs share. It is held off the pane borders by a blank of its own,
+	// the way the two rows above it are held off the strip: an underline landed
+	// on a border reads as a rule the border grew rather than as a mark on the
+	// tab it sits under.
+	lines := []string{m.titleLine(width), m.branchRow(width), "", m.tabStrip(width), ""}
+	return indent(strings.Join(lines, "\n"), headGutter)
+}
+
+// tabStrip is the detail screen's navigation, on a row of its own above the
+// panes. It is not comp.Pane's strip and cannot be: that one is set into a
+// border and separates its segments with border-coloured punctuation so the run
+// reads unbroken, where this one sits on a bare row and would read as dashes.
+//
+// The counts go before a name does. At the narrowest frame the shell will draw,
+// the counted strip is a few cells over, and clipping there takes the tail off
+// the last tab, which may be the one the reader is standing on.
+func (m Model) tabStrip(width int) string {
+	strip := m.renderTabs(m.tabCounts())
+	if lipgloss.Width(strip) > width {
+		strip = m.renderTabs(tabs)
+	}
+	if lipgloss.Width(strip) > width {
+		return paint.Clip(strip, width, lipgloss.NewStyle().Foreground(m.theme.Subtle))
+	}
+	return strip
+}
+
+// renderTabs lays the segments out. The current tab is underlined rather than
+// marked with a glyph, so it takes no cell of its own and nothing to its right
+// steps sideways as the reader moves through the strip.
+func (m Model) renderTabs(list []comp.Tab) string {
+	active := lipgloss.NewStyle().Foreground(m.theme.Accent).Bold(true).Underline(true)
+	idle := lipgloss.NewStyle().Foreground(m.theme.Subtle)
+	count := lipgloss.NewStyle().Foreground(m.theme.MutedOrSubtle())
+
+	parts := make([]string, 0, len(list))
+	for i, tab := range list {
+		style := idle
+		if i == m.tab {
+			style = active
+		}
+		part := style.Render(tab.Label)
+		if tab.Badge != "" {
+			part += count.Render(" " + tab.Badge)
+		}
+		parts = append(parts, part)
+	}
+	return strings.Join(parts, "  ")
+}
+
+// tabCounts is how much each tab holds. Conversation and Files come off the
+// list row, so they are there before the detail query answers; the other two
+// wait for it and render bare meanwhile, because a zero claims a tab is empty
+// rather than unanswered.
+func (m Model) tabCounts() []comp.Tab {
+	counted := make([]comp.Tab, len(tabs))
+	copy(counted, tabs)
+
+	counted[0].Badge = tabCount(m.pr.Comments)
+	counted[tabFiles].Badge = tabCount(m.pr.ChangedFiles)
+	if m.detail.Loaded {
+		counted[tabCommits].Badge = tabCount(len(m.detail.Detail.Commits))
+		counted[tabChecks].Badge = tabCount(len(m.detail.Detail.Rollup.Checks))
+	}
+	return counted
+}
+
+// tabCount is the list screen's own spelling, parentheses and all: they read as
+// holding a quantity where a bare number beside a word reads as part of it.
+//
+// Zero renders as nothing, which reads the same as a count that has not arrived.
+// That conflation is worth taking: both are a tab the reader would open to find
+// out, and "(0)" on four tabs of a fresh screen is a row of noise.
+func tabCount(n int) string {
+	if n == 0 {
+		return ""
+	}
+	return "(" + strconv.Itoa(n) + ")"
 }
 
 // head is what renders: frameHead clipped to the rows left once the panes have
@@ -1826,21 +2025,26 @@ func (m Model) spread(left, right string, width int) string {
 	return left + strings.Repeat(" ", gap) + right
 }
 
-// opened is when the pull request was raised and who raised it, as one clause.
+// Readout is who raised the pull request and how long ago, for the status bar.
+// The root asks the screen that has focus, the same way it asks for the hints
+// beside it.
+//
+// Compact rather than the sentence the header used to carry. The bar's left
+// half is a line of key hints that runs most of the width, so a clause spelled
+// out is one clipped mid-handle on any frame a reader is likely to have.
+//
 // Either half can be missing: a deleted account has no login, and the row the
 // list opens with carries no timestamp until the detail query answers.
-func (m Model) opened() string {
-	age, login := comp.LongAgo(m.pr.CreatedAt), m.pr.Author.Login
+func (m Model) Readout() string {
+	age, login := comp.RelativeTime(m.pr.CreatedAt), comp.Handle(m.pr.Author.Login)
 
 	switch {
 	case age != "" && login != "":
-		return "Opened " + age + " by " + comp.Handle(login)
+		return login + " · " + age
 	case age != "":
-		return "Opened " + age
-	case login != "":
-		return "Opened by " + comp.Handle(login)
+		return age
 	}
-	return ""
+	return login
 }
 
 // branchLine is where the work is going and where it came from. It stays on one
@@ -1848,29 +2052,76 @@ func (m Model) opened() string {
 // the front, so it is what gives way rather than the line wrapping.
 func (m Model) branchLine(width int) string {
 	faint := lipgloss.NewStyle().Foreground(m.theme.Subtle)
-	branches := faint.Render(m.pr.BaseRefName + " ← " + m.pr.HeadRefName)
+	arrow := " ← "
 
-	if lipgloss.Width(branches) > width {
-		return paint.Clip(branches, width, faint)
-	}
-	return branches
+	base, head := m.pr.BaseRefName, m.pr.HeadRefName
+	baseRoom, headRoom := shareBranchRoom(lipgloss.Width(base), lipgloss.Width(head),
+		min(width, branchMeasure)-lipgloss.Width(arrow))
+
+	return clipTo(faint.Render(base), baseRoom, faint) +
+		faint.Render(arrow) +
+		clipTo(faint.Render(head), headRoom, faint)
 }
 
-// statusLine is where the pull request stands, then who raised it and when,
-// with where the checks and the review got to at the far edge. The state always
-// has something to say, so the left half is never empty even when the clause
-// after it is.
-func (m Model) statusLine(width int) string {
-	faint := lipgloss.NewStyle().Foreground(m.theme.Subtle)
+// shareBranchRoom divides what the line has between the two names.
+//
+// A name that fits inside half is never cut, and the room it does not want goes
+// to the other one: main merged into from a long branch takes its four columns
+// and leaves the rest, which is the case worth getting right because it is
+// nearly every pull request. Only where neither will fit is the room split, and
+// then it is halved, because there is nothing to choose between two names that
+// are both too long.
+//
+// The odd column goes to the head. It is the name that says what is being
+// merged, and the base is usually the one a reader already knows.
+func shareBranchRoom(base, head, room int) (int, int) {
+	if room <= 0 {
+		return 0, 0
+	}
+	if base+head <= room {
+		return base, head
+	}
 
+	half := room / 2
+	switch {
+	case base <= half:
+		return base, room - base
+	case head <= half:
+		return room - head, head
+	}
+	return half, room - half
+}
+
+// branchRow is the second line: where the work is going, and where it stands.
+//
+// The two halves are measured together rather than one after the other. spread
+// gives the right half the width and clips the left, and branchLine has already
+// cut its names to the room it thought it had; handed the frame, it would cut a
+// name to a width the row does not have and spread would then cut it again,
+// putting an ellipsis after an ellipsis. So the status is measured first and the
+// branches are told what is left.
+func (m Model) branchRow(width int) string {
+	status := m.statusHalf()
+
+	room := width
+	if status != "" {
+		room = width - lipgloss.Width(status) - 1
+	}
+	return m.spread(m.branchLine(room), status, width)
+}
+
+// statusHalf is where the pull request stands, with where the checks and the
+// review got to after it. The state always has something to say, so this is
+// never empty even when the rollup behind it is.
+func (m Model) statusHalf() string {
 	label, c := comp.PRStateLabel(m.theme, m.pr)
 	icon, _ := comp.PRStateIcon(m.theme, m.pr)
 
-	line := lipgloss.NewStyle().Foreground(c).Render(icon + " " + label)
-	if opened := m.opened(); opened != "" {
-		line += faint.Render(" · " + opened)
+	state := lipgloss.NewStyle().Foreground(c).Render(icon + " " + label)
+	if rollup := m.rollup(); rollup != "" {
+		return state + lipgloss.NewStyle().Foreground(m.theme.Subtle).Render(" · ") + rollup
 	}
-	return m.spread(line, m.rollup(), width)
+	return state
 }
 
 // changes is how much the pull request touches: the file count, then the diff

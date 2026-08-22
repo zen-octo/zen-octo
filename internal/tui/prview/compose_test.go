@@ -459,7 +459,7 @@ func TestARefetchWhileTypingStillReachesTheScreen(t *testing.T) {
 // Focus moving onto the box unlights whichever card had it. The kept page holds
 // the highlight, so it has to be dropped when the box takes the keyboard.
 func TestTakingTheBoxUnlightsTheCardThatHadFocus(t *testing.T) {
-	m := press(detailed(held(sampleDetail()), 200, 60), "}")
+	m := detailed(held(sampleDetail()), 200, 60)
 	if got := focusedCard(t, m.View()); !strings.HasPrefix(got, cardDescription) {
 		t.Fatalf("the ring focused %q, want the description", got)
 	}
@@ -592,7 +592,7 @@ func TestARestoredDraftDoesNotDestroyOneWrittenSince(t *testing.T) {
 func TestWritingFromTheRailMovesTheKeysToTheConversation(t *testing.T) {
 	// l moves the keys to the rail and tab puts its cursor on a row, which is
 	// what the rail paints. Without both, there is no cursor line to be wrong.
-	rail := press(detailed(held(sampleDetail()), 200, 60), "l", "}")
+	rail := press(detailed(held(sampleDetail()), 200, 60), "h", "}")
 	if markedRailRow(t, rail.View()) == "" {
 		t.Fatal("the rail has no cursor line to begin with")
 	}

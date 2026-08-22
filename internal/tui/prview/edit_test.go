@@ -366,12 +366,14 @@ func TestTheDescriptionIsOnlyEditableByWhoeverOpenedIt(t *testing.T) {
 	}
 }
 
-// The key reads the ring, so it does nothing with nothing focused.
-func TestEditNeedsSomethingFocused(t *testing.T) {
-	m := viewing(writable(), 200, 60)
+// The key reads the ring, and a tab with no ring focuses nothing for it to
+// read. The conversation always has a cursor now, so Commits is where the
+// refusal is still visible.
+func TestEditNeedsARingToRead(t *testing.T) {
+	m := press(viewing(writable(), 200, 60), "]")
 
 	if after := press(m, "e").View(); after != m.View() {
-		t.Error("e opened a box with nothing focused")
+		t.Error("e opened a box on a tab with no ring")
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"image/color"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/praxis-labs-io/zen-octo/internal/gh"
 	"github.com/praxis-labs-io/zen-octo/internal/store"
+	"github.com/praxis-labs-io/zen-octo/internal/tui/paint"
 	"github.com/praxis-labs-io/zen-octo/internal/tui/prview"
 	"github.com/praxis-labs-io/zen-octo/internal/tui/syntax"
 	"github.com/praxis-labs-io/zen-octo/internal/tui/theme"
@@ -28,7 +30,7 @@ func samplePR() gh.PullRequest {
 		URL:        sampleURL,
 		Repository: "zen-octo/zen-octo", Author: gh.Actor{Login: "drucial"},
 		State: gh.PRStateOpen, BaseRefName: "main", HeadRefName: "fix-auth-retry",
-		Additions: 42, Deletions: 7, ChangedFiles: 3,
+		Additions: 42, Deletions: 7, ChangedFiles: 3, Comments: 24,
 		Checks: gh.CheckStateFailure, ReviewDecision: gh.ReviewDecisionChangesRequested,
 		CreatedAt: time.Now().Add(-50 * time.Hour),
 	}
@@ -42,7 +44,16 @@ func colorizer() syntax.Syntax {
 	return s
 }
 
-func screen(width, height int) prview.Model { return sized(samplePR(), width, height) }
+// screen and detailed hand the keys to the page. A screen opens with them on
+// the leading pane instead, which is the rail or the column, and almost every
+// test here is about what sits beside that. The ones that are about the
+// arrival itself take opened and onOpen and move nothing.
+//
+// 2 is the page on every tab, and a no-op on a frame with only one pane.
+func screen(width, height int) prview.Model { return press(onOpen(width, height), "2") }
+
+// onOpen is the screen as a reader meets it, keys and all.
+func onOpen(width, height int) prview.Model { return sized(samplePR(), width, height) }
 
 func sized(pr gh.PullRequest, width, height int) prview.Model {
 	m := prview.New(theme.RosePineMoon, pr, prview.RailPreference{}, colorizer())
@@ -90,26 +101,21 @@ func TestTheFrameFillsItsSizeExactly(t *testing.T) {
 func TestTabsSwitchAndOnlyOneReadsAsCurrent(t *testing.T) {
 	m := detailed(held(sampleDetail()), 160, 24)
 
-	active := fgSeq(theme.RosePineMoon.Accent)
-	if top := paneTop(m.View()); !strings.Contains(top, active+"mConversation") {
-		t.Error("Conversation is not the current tab on open")
+	if got := currentTab(t, m.View()); got != "Conversation" {
+		t.Errorf("the current tab is %q on open, want Conversation", got)
 	}
 
 	next := press(m, "]")
-	top := paneTop(next.View())
-	if !strings.Contains(top, active+"mCommits") {
-		t.Error("] did not move to the Commits tab")
-	}
-	if strings.Contains(top, active+"mConversation") {
-		t.Error("Conversation still reads as current after switching")
+	if got := currentTab(t, next.View()); got != "Commits" {
+		t.Errorf("] moved to %q, want Commits", got)
 	}
 	if !strings.Contains(stripANSI(next.View()), "No commits.") {
 		t.Error("the body did not follow the tab")
 	}
 
 	// Four tabs, so [ from the first wraps round to the last.
-	if !strings.Contains(paneTop(press(m, "[").View()), active+"mFiles") {
-		t.Error("[ from the first tab did not wrap to the last")
+	if got := currentTab(t, press(m, "[").View()); got != "Files" {
+		t.Errorf("[ from the first tab wrapped to %q, want Files", got)
 	}
 }
 
@@ -218,21 +224,21 @@ func TestFocusMovesBetweenThePanes(t *testing.T) {
 		t.Fatalf("conversation border = %s on open, want the focused accent", got)
 	}
 
-	rail := press(m, "l")
+	rail := press(m, "h")
 	if got := conversationBorder(t, rail.View()); got != idle {
-		t.Errorf("conversation border = %s after l, want it to recede", got)
+		t.Errorf("conversation border = %s after h, want it to recede", got)
 	}
 
-	if got := conversationBorder(t, press(rail, "h").View()); got != focused {
-		t.Errorf("conversation border = %s after h, want focus back on the left pane", got)
+	if got := conversationBorder(t, press(rail, "l").View()); got != focused {
+		t.Errorf("conversation border = %s after l, want focus back on the right pane", got)
 	}
-	if got := conversationBorder(t, press(rail, "1").View()); got != focused {
-		t.Errorf("conversation border = %s after 1, want focus jumped straight back", got)
+	if got := conversationBorder(t, press(rail, "2").View()); got != focused {
+		t.Errorf("conversation border = %s after 2, want focus jumped straight back", got)
 	}
 }
 
 func TestFocusLeavesTheRailWhenTheRailDoes(t *testing.T) {
-	hidden := press(screen(200, 30), "l", "d") // focus the rail, then hide it
+	hidden := press(screen(200, 30), "h", "d") // focus the rail, then hide it
 
 	if got := conversationBorder(t, hidden.View()); got != fgSeq(theme.RosePineMoon.Accent) {
 		t.Errorf("conversation border = %s, want focus back on it once the rail went away", got)
@@ -254,7 +260,7 @@ func TestTheRailScrollsOnceItHasFocus(t *testing.T) {
 		t.Error("G moved the rail while the conversation had focus")
 	}
 
-	rail := press(m, "l", "G")
+	rail := press(m, "h", "G")
 	if !railHas(t, rail.View(), "Checks") {
 		t.Error("the rail did not scroll once it had focus")
 	}
@@ -285,12 +291,12 @@ func TestADeletedAuthorLeavesNoGapInACardHeading(t *testing.T) {
 	d.Timeline[0].Actor = gh.Actor{}
 
 	frame := detailed(held(d), 200, 30).View()
-	right := paneRight(t, frame)
+	left, right := paneEdges(t, frame)
 
 	// A heading with no login must not open with the separator that would have
 	// followed it.
 	for i, line := range strings.Split(stripANSI(frame), "\n") {
-		body := strings.TrimSpace(strings.Trim(paneBody(line, right), "│ "))
+		body := strings.TrimSpace(strings.Trim(paneBody(line, left, right), "│ "))
 		if strings.HasPrefix(body, "·") {
 			t.Errorf("line %d = %q, want no separator where the login would be", i, body)
 		}
@@ -338,35 +344,143 @@ func TestTheBranchLineClipsTheHeadRatherThanWrapping(t *testing.T) {
 	}
 }
 
-// The state, the author and the timestamp are on the line below. Putting any
-// of them here is what pushed the branch onto two lines.
-func TestTheBranchLineCarriesNothingElse(t *testing.T) {
-	for _, row := range headerRows(t, detailed(held(sampleDetail()), 200, 30).View()) {
-		if !strings.Contains(row, "main ←") {
+// The room is shared, not split. main is four columns and never loses one of
+// them, which is the case worth getting right because it is nearly every pull
+// request; what it leaves goes to the name that says what is being merged.
+func TestAShortBaseLeavesItsRoomToTheHead(t *testing.T) {
+	pr := samplePR()
+	pr.BaseRefName = "main"
+	pr.HeadRefName = "feature/znn-16-a-release-skill-to-carry-the-judgement-the-workflow-cannot"
+
+	base, head := branchHalves(t, sized(pr, 200, 30).View())
+	if base != "main" {
+		t.Errorf("the base reads %q, want main whole", base)
+	}
+	if head != pr.HeadRefName {
+		t.Errorf("the head reads %q, want the room main did not take", head)
+	}
+}
+
+// Two names that will not both fit take half each. There is nothing to choose
+// between them, and the key each carries is at the front where a cut spares it.
+func TestTwoLongBranchesTakeHalfEach(t *testing.T) {
+	pr := samplePR()
+	pr.BaseRefName = "feature/znn-15-cut-releases-from-a-tag-and-install-the-binary-from-one"
+	pr.HeadRefName = "feature/znn-16-a-release-skill-to-carry-the-judgement-the-workflow-cannot"
+
+	base, head := branchHalves(t, sized(pr, 200, 30).View())
+	for _, half := range []struct{ what, name string }{{"base", base}, {"head", head}} {
+		if !strings.HasSuffix(half.name, "…") {
+			t.Errorf("the %s is not marked where it was cut: %q", half.what, half.name)
+		}
+		if !strings.Contains(half.name, "znn-1") {
+			t.Errorf("the cut took the %s's ticket key with it: %q", half.what, half.name)
+		}
+	}
+	if got := lipgloss.Width(base) - lipgloss.Width(head); got > 1 || got < -1 {
+		t.Errorf("the halves differ by %d columns, want them even", got)
+	}
+}
+
+// The line stops at its measure however wide the terminal is. Two refs running
+// the width of a wide frame read as a sentence rather than as a pair.
+func TestTheBranchLineStopsAtItsMeasure(t *testing.T) {
+	pr := samplePR()
+	pr.BaseRefName = strings.Repeat("a", 200)
+	pr.HeadRefName = strings.Repeat("b", 200)
+
+	base, head := branchHalves(t, sized(pr, 400, 30).View())
+	if got := lipgloss.Width(base + " ← " + head); got != 96 {
+		t.Errorf("the branch line is %d columns on a 400-column frame, want 96", got)
+	}
+}
+
+// And it gives way to a frame narrower than the measure, because nothing else
+// holds the header inside the terminal.
+func TestTheBranchLineGivesWayToANarrowFrame(t *testing.T) {
+	pr := samplePR()
+	pr.BaseRefName = strings.Repeat("a", 200)
+	pr.HeadRefName = strings.Repeat("b", 200)
+
+	base, head := branchHalves(t, sized(pr, 60, 30).View())
+	if got := lipgloss.Width(base + " ← " + head); got > 60-headGutterCols*2 {
+		t.Errorf("the branch line is %d columns on a 60-column frame", got)
+	}
+}
+
+// headGutterCols is what the header is held off the terminal's edges by.
+const headGutterCols = 1
+
+// branchHalves is the two names on the branch line, either side of the arrow.
+func branchHalves(t *testing.T, frame string) (string, string) {
+	t.Helper()
+
+	for _, row := range headerRows(t, frame) {
+		base, head, ok := strings.Cut(row, " ← ")
+		if !ok {
 			continue
 		}
-		if row != "main ← fix-auth-retry" {
-			t.Errorf("branch line = %q, want the branches and nothing else", row)
+		// The status shares this row, at its far edge. Two spaces is the gap
+		// spread leaves and neither half carries one.
+		if at, _, cut := strings.Cut(head, "  "); cut {
+			head = at
 		}
-		return
+		return base, head
 	}
 	t.Fatal("no branch line on screen")
+	return "", ""
+}
+
+// The status shares this row, and the branches still take one line. Putting
+// anything beside them used to push them onto two, which is answered now by
+// measuring the two halves against each other rather than each against the
+// frame.
+func TestTheBranchesStillTakeOneLine(t *testing.T) {
+	rows := 0
+	for _, row := range headerRows(t, detailed(held(sampleDetail()), 200, 30).View()) {
+		if !strings.Contains(row, "←") {
+			continue
+		}
+		rows++
+
+		base, head := branchHalves(t, detailed(held(sampleDetail()), 200, 30).View())
+		if base+" ← "+head != "main ← fix-auth-retry" {
+			t.Errorf("the branch half is %q ← %q, want the branches whole", base, head)
+		}
+	}
+	if rows != 1 {
+		t.Errorf("the branches take %d lines, want 1", rows)
+	}
 }
 
 // A right half that fits is not a clipped one. It takes the line to itself
 // where the left half will not fit beside it, and an ellipsis there marks a cut
 // that never happened.
 func TestAHeaderLineTooNarrowForBothHalvesDoesNotMarkACut(t *testing.T) {
-	// The rollup is 29 cells and the gutters take two of the frame, so these
-	// are the widths where it fits exactly and with one to spare.
-	for _, width := range []int{31, 32} {
+	// Measured rather than written down. The half is a state and a rollup and
+	// both are worded elsewhere, so a number here goes stale the first time one
+	// of them gains a letter.
+	var status string
+	for _, row := range headerRows(t, detailed(held(sampleDetail()), 200, 30).View()) {
+		if _, half, ok := strings.Cut(row, "  "); ok && strings.Contains(row, "failing") {
+			status = strings.TrimSpace(half)
+		}
+	}
+	if status == "" {
+		t.Fatal("no status half on a frame with room for one")
+	}
+
+	// The gutters take two of the frame, so these are the widths where the half
+	// fits exactly and with one to spare.
+	exact := lipgloss.Width(status) + headGutterCols*2
+	for _, width := range []int{exact, exact + 1} {
 		t.Run(strconv.Itoa(width), func(t *testing.T) {
 			for _, row := range headerRows(t, detailed(held(sampleDetail()), width, 30).View()) {
 				if !strings.Contains(row, "failing") {
 					continue
 				}
-				if row != "✗ failing · changes requested" {
-					t.Errorf("status line = %q, want the rollup whole and unmarked", row)
+				if row != status {
+					t.Errorf("status line = %q, want %q whole and unmarked", row, status)
 				}
 				return
 			}
@@ -381,33 +495,34 @@ func TestAHeaderLineTooNarrowForBothHalvesDoesNotMarkACut(t *testing.T) {
 func TestAClippedHeaderGivesItsSeparatorBack(t *testing.T) {
 	frame := detailed(held(sampleDetail()), 200, 6).View()
 
-	// Three rows are left once the panes have their floor, and the third of the
-	// header's own is the separator, so two survive.
+	// Three rows are left once the panes have their floor and the header wants
+	// four, so the strip goes; the separator goes with it, because a header cut
+	// to its last carried row has nothing under it to be set apart from.
 	if at := paneTopAt(frame); at != 2 {
-		t.Errorf("the panes open on frame line %d, want line 2 with the separator given back", at)
+		t.Errorf("the panes open on frame line %d, want line 2", at)
 	}
 	if lines := strings.Split(frame, "\n"); len(lines) != 6 {
 		t.Errorf("frame is %d lines, want the 6 it was given", len(lines))
 	}
 }
 
-// The lifecycle, who raised it and when, with where the checks and the review
-// got to pushed to the far edge the way the title line pushes its numbers.
-func TestTheStatusLineCarriesTheRollupAtItsFarEdge(t *testing.T) {
+// The lifecycle and where the checks and the review got to, pushed to the far
+// edge of the branch line the way the title line pushes its numbers.
+func TestTheBranchLineCarriesTheStatusAtItsFarEdge(t *testing.T) {
 	for _, row := range headerRows(t, detailed(held(sampleDetail()), 200, 30).View()) {
-		if !strings.Contains(row, "Opened") {
+		if !strings.Contains(row, "←") {
 			continue
 		}
 		// The gap is what separates the two halves; neither carries one.
-		status, rollup, ok := strings.Cut(row, "  ")
+		branches, rollup, ok := strings.Cut(row, "  ")
 		if !ok {
-			t.Fatalf("status line = %q, want the rollup pushed to the far edge", row)
+			t.Fatalf("branch line = %q, want the status pushed to the far edge", row)
 		}
-		if !strings.HasSuffix(status, "Open · Opened 2 days ago by @drucial") {
-			t.Errorf("status half = %q, want the state and who raised it", status)
+		if branches != "main ← fix-auth-retry" {
+			t.Errorf("branch half = %q, want the branches alone", branches)
 		}
-		if got := strings.TrimSpace(rollup); got != "✗ failing · changes requested" {
-			t.Errorf("far edge = %q, want the checks and the review decision", got)
+		if got := strings.TrimSpace(rollup); !strings.HasSuffix(got, "Open · ✗ failing · changes requested") {
+			t.Errorf("far edge = %q, want the state, the checks and the review decision", got)
 		}
 		return
 	}
@@ -456,12 +571,32 @@ func stripANSI(s string) string {
 func conversationBorder(t *testing.T, frame string) string {
 	t.Helper()
 
-	line := paneTop(frame)
-	end := strings.Index(line, "m")
-	if !strings.HasPrefix(line, "\x1b[") || end < 0 {
-		t.Fatalf("frame does not open with a styled border: %q", line)
+	// Read at the pane's right border rather than its left corner. The first
+	// sequence on the line is the rail's border now that the rail leads the
+	// row, and the conversation's own corner is not always on the frame at all:
+	// a rail too narrow for a column is drawn over it.
+	_, right := paneEdges(t, frame)
+
+	line, sgr, visible := paneTop(frame), "", 0
+	for i := 0; i < len(line); {
+		if strings.HasPrefix(line[i:], "\x1b[") {
+			end := strings.IndexByte(line[i:], 'm')
+			if end < 0 {
+				break
+			}
+			sgr = line[i+2 : i+end]
+			i += end + 1
+			continue
+		}
+		if visible == right {
+			return sgr
+		}
+		_, size := utf8.DecodeRuneInString(line[i:])
+		i += size
+		visible++
 	}
-	return strings.TrimPrefix(line[:end], "\x1b[")
+	t.Fatalf("no styled border at the conversation's right edge: %q", line)
+	return ""
 }
 
 func sampleDetail() gh.PullRequestDetail {
@@ -584,6 +719,11 @@ func held(d gh.PullRequestDetail) store.Detail {
 }
 
 func detailed(d store.Detail, width, height int) prview.Model {
+	return press(opened(d, width, height), "2")
+}
+
+// opened is the screen as a reader meets it: the leading pane has the keys.
+func opened(d store.Detail, width, height int) prview.Model {
 	m := prview.New(theme.RosePineMoon, samplePR(), prview.RailPreference{}, colorizer())
 	m.SetDetail(d)
 	m.SetSize(width, height)
@@ -664,12 +804,12 @@ func TestAConversationWithNothingInItCentresWhatItSaysInstead(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			frame := detailed(tt.held, width, height).View()
-			right := paneRight(t, frame)
+			left, right := paneEdges(t, frame)
 
 			lines := strings.Split(stripANSI(frame), "\n")
 			at := -1
 			for i, line := range lines {
-				if strings.Contains(paneBody(line, right), tt.want) {
+				if strings.Contains(paneBody(line, left, right), tt.want) {
 					at = i
 					break
 				}
@@ -695,7 +835,7 @@ func TestAConversationWithNothingInItCentresWhatItSaysInstead(t *testing.T) {
 			// Two centrings stack here, the block inside the measure and the
 			// measure inside the pane, and each can spend its odd column on the
 			// right. So the two sides can differ by two rather than one.
-			body := paneBody(lines[at], right)
+			body := paneBody(lines[at], left, right)
 			lead := len(body) - len(strings.TrimLeft(body, " "))
 			trail := len(body) - len(strings.TrimRight(body, " "))
 			if lead == 0 || abs(lead-trail) > 2 {
@@ -1035,9 +1175,9 @@ func TestTheSpinnerRunsUntilThereIsSomethingToRead(t *testing.T) {
 func measureGutters(t *testing.T, frame string) (lead, measure, trail int) {
 	t.Helper()
 
-	right := paneRight(t, frame)
+	left, right := paneEdges(t, frame)
 	for _, line := range strings.Split(stripANSI(frame), "\n") {
-		body := []rune(paneBody(line, right))
+		body := []rune(paneBody(line, left, right))
 		// The top edge alone: a card's middle rule and its foot are the same
 		// width, and any of the three would do, but one answer per frame is
 		// what makes the reading stable.
@@ -1103,11 +1243,13 @@ func TestNothingInTheBodyRunsPastTheMeasure(t *testing.T) {
 	assertWithinMeasure(t, detailed(held(d), 200, 60).View())
 }
 
-// The header is built by hand rather than by glamour, so nothing wraps it
-// unless this file does. A long branch name is what finds that out.
-func TestALongHeaderWrapsAtTheMeasure(t *testing.T) {
+// The header is built by hand rather than by glamour, so nothing holds it to
+// the frame unless this file does. A long branch name is what finds that out.
+func TestALongHeaderHoldsItsMeasure(t *testing.T) {
 	pr := samplePR()
-	pr.HeadRefName = "feature/eng-9547-marketing-and-dashboard-share-one-globalscss-so-base-element"
+	// Long enough to overrun the line's measure even with main leaving it every
+	// column main does not want.
+	pr.HeadRefName = "feature/eng-9547-marketing-and-dashboard-share-one-globalscss-so-base-element-styles-leak-across-both"
 
 	d := sampleDetail()
 	d.PullRequest = pr
@@ -1118,9 +1260,14 @@ func TestALongHeaderWrapsAtTheMeasure(t *testing.T) {
 
 	assertWithinMeasure(t, m.View())
 
-	// Wrapped, not truncated: the tail of the branch is still on screen.
-	if !strings.Contains(stripANSI(m.View()), "so-base-element") {
-		t.Error("the branch name was cut rather than wrapped")
+	// The tail is what goes: the key at the front is what names the pull
+	// request, and the line stays on one row either way.
+	out := stripANSI(m.View())
+	if strings.Contains(out, "styles-leak-across-both") {
+		t.Error("the branch ran past the measure on a frame with room for it")
+	}
+	if !strings.Contains(out, "main ← feature/eng-9547-marketing") {
+		t.Errorf("the branch lost the front of its name rather than the tail:\n%s", out)
 	}
 }
 
@@ -1163,7 +1310,7 @@ func TestASegmentThatRendersToNothingLeavesNoGap(t *testing.T) {
 	d.Body = "<!-- linear-preview -->\n\nReview in Linear\n"
 
 	frame := detailed(held(d), 200, 40).View()
-	right := paneRight(t, frame)
+	left, right := paneEdges(t, frame)
 	lines := strings.Split(stripANSI(frame), "\n")
 
 	for i, line := range lines {
@@ -1171,7 +1318,7 @@ func TestASegmentThatRendersToNothingLeavesNoGap(t *testing.T) {
 			continue
 		}
 		// The heading, then its rule, then the first line of the body.
-		if got := strings.Trim(paneBody(lines[i+2], right), "│ "); got != "Review in Linear" {
+		if got := strings.Trim(paneBody(lines[i+2], left, right), "│ "); got != "Review in Linear" {
 			t.Errorf("first body line = %q, want the text with no gap above it", got)
 		}
 		return
@@ -1182,7 +1329,7 @@ func TestASegmentThatRendersToNothingLeavesNoGap(t *testing.T) {
 // A byline pressed against the comment under it reads as one paragraph.
 func TestAThreadCommentIsSpacedFromItsByline(t *testing.T) {
 	frame := detailed(held(sampleDetail()), 200, 40).View()
-	right := paneRight(t, frame)
+	left, right := paneEdges(t, frame)
 	lines := strings.Split(stripANSI(frame), "\n")
 
 	for i, line := range lines {
@@ -1194,7 +1341,7 @@ func TestAThreadCommentIsSpacedFromItsByline(t *testing.T) {
 		}
 		// The card and the tree rail draw their own borders through the line;
 		// what is left after them is the content.
-		if got := strings.Trim(paneBody(lines[i+1], right), "│ "); got != "" {
+		if got := strings.Trim(paneBody(lines[i+1], left, right), "│ "); got != "" {
 			t.Errorf("line after the byline = %q, want a blank one", got)
 		}
 		return
@@ -1225,14 +1372,12 @@ func TestDetailsFoldToALineAndOpenOnTheKey(t *testing.T) {
 		t.Error("the folded table is on screen anyway")
 	}
 
-	// The key acts on the focused card, so tab has to pick one first.
-	if strings.Contains(stripANSI(press(m, "space").View()), "did a thing") {
-		t.Error("space opened a fold with no card focused")
-	}
-
+	// The key acts on the focused card, and the fold is in the description,
+	// which is the card the cursor opens on.
+	//
 	// Pressed in sequence rather than from the same starting model each time.
 	// What is unfolded is a map, which every copy of the model shares.
-	m = press(m, "}", "space")
+	m = press(m, "space")
 	if !strings.Contains(stripANSI(m.View()), "did a thing") {
 		t.Error("o did not open the fold")
 	}
@@ -1249,26 +1394,35 @@ func TestDetailsFoldToALineAndOpenOnTheKey(t *testing.T) {
 // Scanning a content line for the first │ finds a card's border instead, and
 // every assertion built on that only ever looks at the gutter, where there is
 // nothing to find.
-func paneRight(t *testing.T, frame string) int {
+// paneEdges is where the conversation pane's own borders sit, as rune indices
+// into a frame line. It is the last pane on the row rather than the first: the
+// rail and the file column both lead it.
+func paneEdges(t *testing.T, frame string) (left, right int) {
 	t.Helper()
 
-	// Rune index, not byte: the border runes are three bytes each.
+	// Rune indices, not bytes: the border runes are three bytes each.
+	left, right = -1, -1
 	for i, r := range []rune(stripANSI(paneTop(frame))) {
-		if r == '╮' {
-			return i
+		switch r {
+		case '╭':
+			left = i
+		case '╮':
+			right = i
 		}
 	}
-	t.Fatal("the frame carries no pane border")
-	return 0
+	if left < 0 || right < 0 {
+		t.Fatalf("the frame carries no pane border: %q", stripANSI(paneTop(frame)))
+	}
+	return left, right
 }
 
 // paneBody is the conversation pane's interior on one frame line.
-func paneBody(line string, right int) string {
+func paneBody(line string, left, right int) string {
 	runes := []rune(line)
-	if len(runes) <= right || runes[0] != '│' {
+	if len(runes) <= right || left >= len(runes) || runes[left] != '│' {
 		return ""
 	}
-	return string(runes[1:right])
+	return string(runes[left+1 : right])
 }
 
 // assertWithinMeasure holds every line of the conversation inside the measure
@@ -1278,9 +1432,9 @@ func assertWithinMeasure(t *testing.T, frame string) {
 	t.Helper()
 
 	lead, rule, _ := measureGutters(t, frame)
-	right := paneRight(t, frame)
+	left, right := paneEdges(t, frame)
 	for i, line := range strings.Split(stripANSI(frame), "\n") {
-		body := []rune(paneBody(line, right))
+		body := []rune(paneBody(line, left, right))
 		if len(body) <= lead+rule {
 			continue
 		}
@@ -1293,11 +1447,11 @@ func assertWithinMeasure(t *testing.T, frame string) {
 // Text against the border reads as a rendering fault rather than as a box.
 func TestACardKeepsItsTextOffTheBorder(t *testing.T) {
 	frame := detailed(held(sampleDetail()), 200, 40).View()
-	right := paneRight(t, frame)
+	left, right := paneEdges(t, frame)
 
 	cards := 0
 	for i, line := range strings.Split(stripANSI(frame), "\n") {
-		body := []rune(paneBody(line, right))
+		body := []rune(paneBody(line, left, right))
 
 		// A content row of a card, rather than one of its own edges.
 		start := strings.IndexRune(string(body), '│')
@@ -1379,9 +1533,9 @@ func TestALongTitleClipsRatherThanPushingTheChurnOff(t *testing.T) {
 // used to close on a rule of its own, and the card's border a row under that
 // read as a box that had come open.
 //
-// The trailing blank the header ends on is dropped, so what comes back is the
-// lines that carry something. Matching on their text instead breaks the moment
-// a line is empty, which is one of the cases worth asserting.
+// A trailing blank is dropped, so what comes back is the lines that carry
+// something. Matching on their text instead breaks the moment a line is empty,
+// which is one of the cases worth asserting.
 func headerRows(t *testing.T, frame string) []string {
 	t.Helper()
 
@@ -1400,16 +1554,66 @@ func headerRows(t *testing.T, frame string) []string {
 	return nil
 }
 
-// What and how big, where the code is going, then a gap, then where the pull
-// request stands and who raised it.
+// stripRow is the tab strip: the last row of the header that carries anything.
+// The header closes on a blank holding it off the pane borders, so the row
+// above the first corner is that blank rather than the strip.
+func stripRow(t *testing.T, frame string) string {
+	t.Helper()
+
+	var last string
+	for _, line := range strings.Split(frame, "\n") {
+		if strings.HasPrefix(stripANSI(line), "╭") {
+			return last
+		}
+		if strings.TrimSpace(stripANSI(line)) != "" {
+			last = line
+		}
+	}
+	t.Fatal("no pane on screen to close the header")
+	return ""
+}
+
+// currentTab is the tab the strip reads as current, found by the underline it
+// alone carries. Matched on the attribute rather than on a rendered sequence:
+// lipgloss writes one SGR run per rune for an underlined label, so there is no
+// single escape standing in front of the whole name.
+func currentTab(t *testing.T, frame string) string {
+	t.Helper()
+
+	var out strings.Builder
+	row, under := stripRow(t, frame), false
+	for len(row) > 0 {
+		if !strings.HasPrefix(row, "\x1b[") {
+			r := []rune(row)[0]
+			if under {
+				out.WriteRune(r)
+			}
+			row = row[len(string(r)):]
+			continue
+		}
+		end := strings.Index(row, "m")
+		if end < 0 {
+			break
+		}
+		under = slices.Contains(strings.Split(row[2:end], ";"), "4")
+		row = row[end+1:]
+	}
+	return strings.TrimSpace(out.String())
+}
+
+// What and how big, where the code is going, then a gap, then where the reader
+// is standing.
 func TestTheHeaderReadsAsTwoBlocks(t *testing.T) {
 	rows := headerRows(t, detailed(held(sampleDetail()), 200, 30).View())
 
+	// Two lines and four corners: what it is and how big, then where it is
+	// going and how it is doing. Who opened it and when is on the status bar.
+	// The strip closes the block, on the pane borders it switches.
 	want := []string{
 		"#412 Fix the auth retry backoff loop",
 		"main ← fix-auth-retry",
 		"",
-		"Open · Opened 2 days ago by @drucial",
+		"Conversation",
 	}
 	if len(rows) != len(want) {
 		t.Fatalf("header is %d lines, want %d: %q", len(rows), len(want), rows)
@@ -1421,6 +1625,105 @@ func TestTheHeaderReadsAsTwoBlocks(t *testing.T) {
 		if !strings.Contains(rows[i], w) {
 			t.Errorf("header line %d = %q, want it to carry %q", i, rows[i], w)
 		}
+	}
+}
+
+// A tab name is never what gets cut. The counts are the droppable half of the
+// strip, so they go first and every width the shell will draw still names all
+// four tabs whole.
+func TestTheStripDropsItsCountsBeforeATabName(t *testing.T) {
+	// A busy pull request, because that is the one the rule is for: four counts
+	// of one digit fit the narrowest frame the shell draws, and it is the third
+	// digit on a long-running branch that puts the strip over.
+	d := sampleDetail()
+	for range 128 {
+		d.Commits = append(d.Commits, sampleCommits()...)
+	}
+
+	for width := 56; width <= 200; width += 8 {
+		strip := stripANSI(stripRow(t, detailed(held(d), width, 30).View()))
+		for _, tab := range []string{"Conversation", "Commits", "Checks", "Files"} {
+			if !strings.Contains(strip, tab) {
+				t.Errorf("width %d: %q is cut: %q", width, tab, strip)
+			}
+		}
+	}
+
+	// And it is the counts the narrow frame gave up to do it.
+	if narrow := stripANSI(stripRow(t, detailed(held(d), 56, 40).View())); strings.Contains(narrow, "(") {
+		t.Errorf("the strip kept its counts where they did not fit: %q", narrow)
+	}
+	if wide := stripANSI(stripRow(t, detailed(held(d), 200, 40).View())); !strings.Contains(wide, "(24)") {
+		t.Errorf("the strip carries no counts where they fit: %q", wide)
+	}
+}
+
+// The mark is a cell every tab holds, not a prefix the current one gains. Drawn
+// on the active tab alone, every tab to its right would step sideways each time
+// the reader changed tab, which is a strip that moves under the key that moves
+// through it.
+func TestTheStripHoldsItsColumnsWhicheverTabIsCurrent(t *testing.T) {
+	m := detailed(held(sampleDetail()), 200, 30)
+
+	var first []int
+	for _, tab := range []string{"Conversation", "Commits", "Checks", "Files"} {
+		strip := stripANSI(stripRow(t, m.View()))
+
+		// Columns rather than byte offsets: the mark is three bytes where the
+		// space standing in for it is one, so a strip that never moved would
+		// still measure differently on every tab.
+		var at []int
+		for _, name := range []string{"Conversation", "Commits", "Checks", "Files"} {
+			at = append(at, len([]rune(strip[:strings.Index(strip, name)])))
+		}
+		if first == nil {
+			first = at
+		}
+		if !slices.Equal(at, first) {
+			t.Errorf("on %s the labels start at %v, want %v as on the first tab", tab, at, first)
+		}
+		m = press(m, "]")
+	}
+}
+
+// A count that has not answered renders nothing. A zero claims the tab is
+// empty, which is a different thing from unasked, and the two tabs that wait on
+// the detail query are unasked for as long as it is out.
+func TestAnUnansweredTabCountIsAbsentRatherThanZero(t *testing.T) {
+	strip := stripANSI(stripRow(t, onOpen(200, 30).View()))
+
+	if strings.Contains(strip, "(0)") {
+		t.Errorf("the strip reads %q, want no count on what has not answered", strip)
+	}
+	// The two off the list row are there before the query is: the reader has
+	// them the moment the screen opens.
+	for _, want := range []string{"Conversation (24)", "Files (3)"} {
+		if !strings.Contains(strip, want) {
+			t.Errorf("the strip reads %q, want %q off the row", strip, want)
+		}
+	}
+}
+
+// Both panes are named, and the right one by what it holds rather than by the
+// tab it is under: the strip a row above already says which tab this is.
+func TestEachTabNamesBothOfItsPanes(t *testing.T) {
+	m := detailed(held(sampleDetail()), 200, 40)
+	m.SetFiles(loadedFiles(sampleFiles(), 0))
+
+	for _, tt := range []struct{ tab, side, main string }{
+		{"Conversation", "Details", "Feed"},
+		{"Commits", "Commits", "Diff"},
+		{"Checks", "Checks", "Log"},
+		{"Files", "Files", "Diff"},
+	} {
+		top := stripANSI(paneTop(m.View()))
+		if !strings.Contains(top, "[1]─"+tt.side) {
+			t.Errorf("%s: the left pane reads %q, want %q", tt.tab, top, tt.side)
+		}
+		if !strings.Contains(top, "[2]─"+tt.main) {
+			t.Errorf("%s: the right pane reads %q, want %q", tt.tab, top, tt.main)
+		}
+		m = press(m, "]")
 	}
 }
 
@@ -1437,7 +1740,7 @@ func TestTheHeaderIsOnEveryTab(t *testing.T) {
 
 	for _, tab := range []string{"Conversation", "Commits", "Checks", "Files"} {
 		frame := m.View()
-		if !onTab(frame, tab) {
+		if !onTab(t, frame, tab) {
 			t.Fatalf("the strip does not read %q as the current tab", tab)
 		}
 
@@ -1479,7 +1782,7 @@ func TestTheHeaderHoldsItsColumnAcrossTabs(t *testing.T) {
 	}
 
 	files := press(m, "]", "]", "]")
-	if !strings.Contains(stripANSI(paneTop(files.View())), "4 files") {
+	if !strings.Contains(stripANSI(paneTop(files.View())), "Files") {
 		t.Fatal("setup: the Files tab opened no column, so there is nothing to hold against")
 	}
 
@@ -1498,18 +1801,19 @@ func TestTheHeaderDoesNotScrollWithTheConversation(t *testing.T) {
 	}
 }
 
-// The age is phrased so it reads as when the pull request was created rather
-// than as when anything last happened to it, and it has to survive both ends of
-// the scale.
-func TestTheAgeReadsAsWhenItOpened(t *testing.T) {
+// The readout is who raised the pull request and how long ago, for the status
+// bar. Compact, because the bar's left half is a line of key hints that runs
+// most of the width and a clause spelled out is one clipped mid-handle.
+func TestTheReadoutNamesWhoOpenedItAndWhen(t *testing.T) {
 	tests := []struct {
 		name    string
 		created time.Time
 		want    string
 	}{
-		{name: "days", created: time.Now().Add(-50 * time.Hour), want: "Opened 2 days ago by @drucial"},
-		{name: "hours", created: time.Now().Add(-19 * time.Hour), want: "Opened 19 hours ago by @drucial"},
-		{name: "moments", created: time.Now(), want: "Opened just now by @drucial"},
+		{name: "days", created: time.Now().Add(-50 * time.Hour), want: "@drucial · 2d"},
+		{name: "hours", created: time.Now().Add(-19 * time.Hour), want: "@drucial · 19h"},
+		{name: "minutes", created: time.Now().Add(-34 * time.Minute), want: "@drucial · 34m"},
+		{name: "moments", created: time.Now(), want: "@drucial · now"},
 	}
 
 	for _, tt := range tests {
@@ -1517,52 +1821,63 @@ func TestTheAgeReadsAsWhenItOpened(t *testing.T) {
 			d := sampleDetail()
 			d.CreatedAt = tt.created
 
-			rows := headerRows(t, detailed(held(d), 200, 30).View())
-			if got := rows[len(rows)-1]; !strings.Contains(got, tt.want) {
-				t.Errorf("last header line = %q, want %q", got, tt.want)
+			if got := detailed(held(d), 200, 30).Readout(); got != tt.want {
+				t.Errorf("readout = %q, want %q", got, tt.want)
 			}
 		})
 	}
 }
 
-// A pull request with no timestamp is not one opened at the epoch, and a
-// separator with nothing after it says the render broke.
-func TestNoTimestampLeavesNoTrailingSeparator(t *testing.T) {
-	d := sampleDetail()
-	d.CreatedAt = time.Time{}
-
-	// Nothing to roll up either, so the clause under test is the whole line and
-	// a fragment left on the end of it is unmistakable.
-	d.Checks, d.ReviewDecision = gh.CheckStateNone, gh.ReviewDecisionNone
-
-	// Either half of the clause can be missing, and neither leaves a fragment.
-	rows := headerRows(t, detailed(held(d), 200, 30).View())
-	if got := rows[len(rows)-1]; got != "\uf407 Open · Opened by @drucial" {
-		t.Errorf("status line = %q, want the clause without a time in it", got)
+// Either half can be missing: a deleted account has no login, and the row the
+// list opens with carries no timestamp until the detail lands. Neither leaves a
+// separator with nothing after it.
+func TestTheReadoutDropsWhicheverHalfIsMissing(t *testing.T) {
+	tests := []struct {
+		name  string
+		login string
+		when  time.Time
+		want  string
+	}{
+		{name: "no timestamp", login: "drucial", want: "@drucial"},
+		{name: "no author", when: time.Now().Add(-50 * time.Hour), want: "2d"},
+		{name: "neither", want: ""},
 	}
 
-	// With neither half there is no clause at all, and the state stands alone
-	// rather than trailing a separator.
-	d.Author = gh.Actor{}
-	rows = headerRows(t, detailed(held(d), 200, 30).View())
-	if got := rows[len(rows)-1]; got != "\uf407 Open" {
-		t.Errorf("status line = %q, want the state on its own", got)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			d := sampleDetail()
+			d.CreatedAt = tt.when
+			d.Author = gh.Actor{Login: tt.login}
+
+			if got := detailed(held(d), 200, 30).Readout(); got != tt.want {
+				t.Errorf("readout = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 
-// railRows is the details column's own lines, which start past the
-// conversation pane's right border.
+// And the header no longer carries any of it. The line it was on is gone.
+func TestTheHeaderLeavesTheOpenedByToTheBar(t *testing.T) {
+	for _, row := range headerRows(t, detailed(held(sampleDetail()), 200, 30).View()) {
+		if strings.Contains(row, "Opened") || strings.Contains(row, "@drucial") {
+			t.Errorf("header line %q still carries who opened the pull request", row)
+		}
+	}
+}
+
+// railRows is the details column's own lines, which lead the row and stop at
+// the conversation pane's left border.
 func railRows(t *testing.T, frame string) []string {
 	t.Helper()
 
-	right := paneRight(t, frame)
+	left, _ := paneEdges(t, frame)
 	var rows []string
 	for _, line := range strings.Split(stripANSI(frame), "\n") {
 		runes := []rune(line)
-		if len(runes) <= right+1 {
+		if left == 0 || len(runes) < left {
 			continue
 		}
-		rows = append(rows, strings.Trim(string(runes[right+1:]), "│╭╮╰╯─ "))
+		rows = append(rows, strings.Trim(string(runes[:left]), "│╭╮╰╯─ "+paint.BarGlyph))
 	}
 	return rows
 }
@@ -1863,7 +2178,7 @@ func markSGR(t *testing.T, frame, text string) string {
 	t.Helper()
 
 	for _, raw := range railRaw(t, frame) {
-		if strings.Trim(stripANSI(raw), "│╭╮╰╯›─ ") != text {
+		if strings.Trim(stripANSI(raw), "│╭╮╰╯›─ "+paint.BarGlyph) != text {
 			continue
 		}
 		seq, ok := rowMark(raw)
@@ -1912,18 +2227,20 @@ func rowMark(raw string) (string, bool) {
 func railRaw(t *testing.T, frame string) []string {
 	t.Helper()
 
-	right := paneRight(t, frame)
+	left, _ := paneEdges(t, frame)
 	top := paneTopAt(frame)
 	var rows []string
 
 	for at, line := range strings.Split(frame, "\n") {
-		// The header spans the whole frame, so it reaches past the conversation
-		// pane's right border without being the rail.
+		// The header spans the whole frame, so it reaches into the rail's
+		// columns without being the rail.
 		if at < top {
 			continue
 		}
+		// The rail leads the row, so its share of the line is everything before
+		// the conversation's own left border.
 		visible, i := 0, 0
-		for i < len(line) && visible <= right {
+		for i < len(line) && visible < left {
 			if strings.HasPrefix(line[i:], "\x1b[") {
 				end := strings.IndexByte(line[i:], 'm')
 				if end < 0 {
@@ -1936,8 +2253,8 @@ func railRaw(t *testing.T, frame string) []string {
 			i += size
 			visible++
 		}
-		if visible > right {
-			rows = append(rows, line[i:])
+		if visible == left && left > 0 {
+			rows = append(rows, line[:i])
 		}
 	}
 	return rows
@@ -1985,14 +2302,14 @@ func TestAnEventWithNoWordsForItLeavesNoGap(t *testing.T) {
 	}
 
 	frame := detailed(held(d), 200, 44).View()
-	right := paneRight(t, frame)
+	left, right := paneEdges(t, frame)
 	lines := strings.Split(stripANSI(frame), "\n")
 
 	// Every gap, not the first: the unrendered event sits between the second
 	// card and the third, and stopping at the first pair never reaches it.
 	closed, gaps := -1, 0
 	for i, line := range lines {
-		body := paneBody(line, right)
+		body := paneBody(line, left, right)
 		switch {
 		case strings.Contains(body, "╰"):
 			closed = i

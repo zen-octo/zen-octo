@@ -60,7 +60,7 @@ it the change is reverted and a toast says so.
 
 ## The details rail
 
-`d` opens a rail down the side carrying the five things you would otherwise open
+`d` opens a rail down the left carrying the five things you would otherwise open
 a browser to change: state, labels, reviewers, assignees and the base branch.
 
 Every row answers to `⏎`, which opens a picker as a centred modal. The picker

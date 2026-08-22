@@ -139,7 +139,7 @@ func TestTheMergeRowIsAControlOnlyWhereThereIsAMergeToMake(t *testing.T) {
 			d.Viewer.CanMergeAsAdmin = tt.admin
 
 			label, _ := mergeLabelOf(d)
-			m := press(detailed(held(d), 200, 60), "2")
+			m := press(detailed(held(d), 200, 60), "1")
 
 			var reached bool
 			for range 30 {
@@ -169,7 +169,7 @@ func TestAMergedPullRequestSaysSoAndTheRingWalksPast(t *testing.T) {
 		t.Errorf("the Merge row does not name where it landed:\n%s", out)
 	}
 
-	m := press(detailed(held(d), 200, 60), "2")
+	m := press(detailed(held(d), 200, 60), "1")
 	for range 30 {
 		m = press(m, "j")
 		if strings.Contains(markedRailRow(t, m.View()), "Merged into") {
@@ -700,7 +700,7 @@ func TestAClosedPullRequestOffersNoMerge(t *testing.T) {
 			d := mergeableDetail()
 			d.State = state
 
-			m := press(detailed(held(d), 200, 60), "2")
+			m := press(detailed(held(d), 200, 60), "1")
 			for range 30 {
 				m = press(m, "j")
 				if row := markedRailRow(t, m.View()); strings.Contains(row, "Ready to merge") {
@@ -721,7 +721,7 @@ func TestAMergeInFlightKeepsItsRowOnTheRing(t *testing.T) {
 	writing := held(d)
 	writing.StateWriting = true
 
-	m := press(detailed(writing, 200, 60), "2")
+	m := press(detailed(writing, 200, 60), "1")
 
 	var reached []string
 	for range 30 {

@@ -214,17 +214,107 @@ Inserting rebuilds the buffer back to front. `SetValue` is a `Reset` and an `Ins
 
 The list is offered before anything is fetched, because the people on the pull request are known from the detail and are who a reply usually names. `mentionableUsers` rides on the repo-meta query, so the first `@` costs a request only where no picker has opened yet, and the note under the rows is what stops a short list of participants reading as everybody there is: on its way, or refused, or matched nobody, each in its own words. The one that had to be built for it is the refusal. `SetRepo` declines to act while `Capturing()` is true, and a compose box always is, so `refillMentions` runs on its first line ahead of every guard; and `repoMetaFailed` told the screen nothing at all, which made a dead fetch and an unasked one render identically, which is the exact failure a silent empty list is.
 
+**The header is two lines and four corners.** The title and the number lead,
+with what the pull request changes at the far edge; the branches lead the second,
+with the lifecycle and the check rollup at the far edge of that. It was five
+rows: a third line carried the state, who opened it and when, and a blank held
+that apart from the two naming the pull request. Who opened it went to the status
+bar, which is empty on that side most of the time, and the two blanks went with
+the line. The one closing the block stays, because the pane border under it is
+already a horizontal and a second one a row above reads as a box that has come
+open, and the tab strip is what sits under it now.
+
+The two halves of the second line are measured against each other rather than
+each against the frame. `spread` gives the right half the width and clips the
+left, and `branchLine` has already cut its names to the room it thought it had;
+handed the frame, it cuts a name to a width the row does not have and `spread`
+cuts it again, which puts an ellipsis after an ellipsis. So the status is
+measured first and the branches are told what is left.
+
+**The tab strip closes the header, on a row of its own above the panes.** It sat
+in the main pane's top border, which was right while the strip travelled with
+that pane and stopped being right once the rail moved left: navigation for the
+whole screen was being drawn inside one of the two boxes it switches, and it
+cost that pane its title outright, since `Tabs` wins over `Title` in
+`topBorder`. It is not `comp.Pane`'s strip and cannot be. That one is set into a
+border and separates its segments with border-coloured punctuation so the run
+reads unbroken; this one sits on a bare row, where the same punctuation reads as
+dashes. The list screen still draws its sections through `Pane.Tabs`, so the two
+are two renderers on purpose, and the header's stays in `prview` with its one
+caller.
+
+**The current tab is underlined rather than marked.** A glyph would need a cell
+every tab held open, or every tab to the right of the current one steps sideways
+on the key that steps through them; an underline takes none, so the strip starts
+level with the two rows above it. It is held off the pane borders by a blank of
+its own, because a rule landing on a border reads as one the border grew rather
+than as a mark on the tab it sits under. Lipgloss writes that underline one SGR
+run per rune, so nothing may look for a single escape standing in front of a
+whole label. The counts go before a name does: at the narrowest frame the shell will draw
+the counted strip is a few cells over, and clipping there takes the tail off the
+last tab, which may be the one the reader is standing on. Conversation and Files
+count off the list row, so they are there before the detail query answers;
+Commits and Checks wait for it and render bare meanwhile, because a zero claims
+a tab is empty rather than unanswered. The parentheses are `list.badge`'s
+spelling, which is the one this app already had.
+
+**Both panes are named, and the right one by what it holds** rather than by the
+tab it is under: Feed, Diff, Log, Diff, against Details, Commits, Checks, Files.
+The left column gave its count up to the strip, which can say all four where a
+column could only ever say its own, and the same number in two places is one of
+them saying nothing.
+
+**Every secondary pane is the left column, the rail included.** It sat on the
+right until it was the only one that did, and the sidebar then changed sides on
+a keypress that only changed which tab was on. Pane 1 is that column on every
+tab and 2 is what it sits beside. `visiblePanes` is the one place that order is written down, because the
+enum cannot carry it: the rail and the file column are exclusive and sit in the
+same place, so stepping focus by adding one to the enum is right on whichever
+kind of tab the order was written for and wrong on the other.
+
+**The leading pane takes the keys on the way in, once.** It is the one the
+reader navigates with, and it is numbered first because it is where the eye
+lands. It happens on the first `layout` rather than in `New`, because which pane
+leads is a question about a frame and `New` has not been given one, and it
+latches on having found a second pane rather than on having run, since `layout`
+runs again on every resize. The strip is left alone: a reader changing tab has
+already chosen a pane, and handing the keys back on every press of it would make
+them ask for the page again each time they came round. Commits and Checks still
+take their column on arrival, which they did before any of this.
+
+**A tab gives back the pane it was left on.** Focus is one field where the
+scroll is four, and Commits and Checks take their column, so a round trip
+through one of them used to come back on a pane nobody chose: the column leaves
+the screen and `layout` puts the keys wherever is left. `panes` parks it per tab
+beside `offsets`, and `paneNone` leads the enum so an unopened tab is the
+slice's own zero. Those two take their column on arrival and only on arrival,
+which is what that zero answers: a reader who walked off it once meant it. The
+fallback lands on the leading pane rather than on the main one, because the rail
+and the file column are exclusive and sit in the same place, and what a
+departing column leaves behind is whatever stands where it stood.
+
+**A cursor is landed wherever there is something to land it on**, and `esc`
+leaves in one press. The conversation and the diff opened with nothing lit, so
+the first press of a motion key was spent arriving rather than moving, and `esc`
+let go of a card before it would leave. With a cursor everywhere there is always
+something to let go of, so the reader who wanted the list would have paid two
+presses every time: a cursor that always exists is not a thing to be dismissed.
+The Checks search keeps its own leg, because `n` and `N` stay armed off it.
+`landCursor` and `focusPane` report whether they placed one, since arriving
+somewhere is a move: `walkDiff` stepped again on top of the landing and a brace
+pressed from the file column skipped the first hunk of the file.
+
 **`d` answers at every width the shell will draw, because the rail is the only
 route to five writes**: state, labels, reviewers, assignees and the base branch.
 It used to be refused below `railColumnFrom`, where the key set the preference
 and rendered nothing, and a client in a drawer beside an editor was read-only
 with the bar still offering the key. What that width decides now is where the
 rail lands rather than whether it comes: above it a column, below it the same
-pane painted over the right of the conversation. The frame under it is
+pane painted over the left of the conversation. The frame under it is
 untouched, so nothing is relaid out on the toggle and the words behind the rail
 are covered rather than rewrapped; it goes on before the pickers, so the modal a
-rail row opens still draws over it. It sits against the right edge and not
-centred, which is where the eye already looks for it. **An overlaid rail steps
+rail row opens still draws over it. It sits against the left edge and not
+centred, because that is where the column would have been. **An overlaid rail steps
 aside for a box**, on `Composing()` and not on `Capturing()`: a picker and the
 merge form are drawn over the page and cover it themselves, where a compose or
 reply box is drawn down the page and gets covered instead, losing the half of
@@ -241,9 +331,11 @@ is where the rail comes up unasked, and between the two the reader asks.
 
 The rail is the exception, and the braces are dead on it. Its rows are a list of controls rather than blocks of prose, so it answers to the movement keys the way the file column does: `railDriving` sends `j` and `k` to the cursor, and taking the pane lands the cursor on its first control rather than waiting to be pressed once before it will say where the keys go. Two things fall out of it being a list with facts in it. The cursor stops at each end rather than coming back round, which the conversation's ring does too: that one lapped once, on the argument that the ring is the whole of the content and there is nothing past the last card, but a real pull request is a page deep and the wrap is then the longest throw either key can make, arriving at the end the reader was walking away from. Both report the key untaken there, which is what lets the pane scroll to whatever sits under the last stop. And `g`, `G` and the page keys never move the cursor, because those go to the ends of a pane and the rail's ends are past its last stop.
 
+**The rail's cursor line carries the bar as well as the fill**, which is a second mark the conversation's cards were refused. It earns it where they do not: the ring walks the rail's controls and steps over the headings between them, so the cursor lands on rows that are not neighbours, and a reader tracking it is looking for where it went rather than watching it move. The columns beside the other three tabs are flat, every row a stop, so the fill alone says everything there and none of them takes a bar. It is `paint.Lead` and `paint.BarGlyph`, the diff's own, in the cell `railGutter` already holds open: one glyph for one fact, and no row gains width by being the one under the cursor.
+
 The bar's hints are the detail screen's own, built per tab from what that tab can do. The keymap is the same on all four and the tabs are not: Checks has no blocks to walk, Commits and Checks have nothing to expand, and the three with a column have no rail to toggle. A hint for a key that is inert under it is worse than no hint, since the reader presses it, nothing happens, and the line stops being worth reading. The same rule takes the hints off entirely while a picker or a form is up: it has the keys they name and carries a hint line of its own.
 
-The status bar carries the hints on the left in every state. A toast or the refresh spinner lands on the right and wins a narrow line, which is the opposite of the readout that sits there otherwise: a toast may be the only account of a write that failed, and a key works whether or not it is on the line. `RenderMessage` is that priority, beside `Render`. The readout is the remaining budget and nothing else, shown only once it has run low enough to be worth reading. Neither screen names itself there: the list's section is the current tab in the top border and the detail's pull request is in its own header, so both were spending the line on something already on the screen, and spending it on the side a toast lands on.
+The status bar carries the hints on the left in every state. A toast or the refresh spinner lands on the right and wins a narrow line, which is the opposite of the readout that sits there otherwise: a toast may be the only account of a write that failed, and a key works whether or not it is on the line. `RenderMessage` is that priority, beside `Render`. The readout under those is the remaining budget while it is low enough to be worth reading, and under that whatever the screen in front of the reader has to say: on the detail, who raised the pull request and how long ago, as `@handle · 2d`. The budget outranks it, being a number that runs out where the other is a fact that does not change. Neither screen names *itself* there: the list's section is the current tab in the top border and the detail's pull request is in its own header, so both were spending the line on something already on the screen, and spending it on the side a toast lands on. Who opened it stopped being one of those when the header went to two lines. The compact form is the bar's alone, because the left half is a line of key hints running most of the width and a clause spelled out is one clipped mid-handle.
 
 The State row's menu is built from where the pull request sits and from what
 GitHub says the viewer may do to it, never from the word on the row: state and

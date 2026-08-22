@@ -7,10 +7,14 @@ import (
 
 // barredRow is the row the cursor is on, read off the bar it paints in the
 // leading cell. The fill is shared with a lit card and the bar is not.
+//
+// Rows inside a pane only. The tab strip marks its current tab with the same
+// glyph, and it sits above every border.
 func barredRow(frame string) string {
 	for _, line := range strings.Split(frame, "\n") {
-		if strings.Contains(stripANSI(line), "▌") {
-			return strings.TrimSpace(stripANSI(line))
+		bare := stripANSI(line)
+		if strings.HasPrefix(bare, "│") && strings.Contains(bare, "▌") {
+			return strings.TrimSpace(bare)
 		}
 	}
 	return ""
